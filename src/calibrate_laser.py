@@ -5,6 +5,7 @@ import numpy as np
 import cv2
 import os
 from optparse import OptionParser
+import math
 
 # modifies in place and returns
 def calc_chessboard_corners(board_size, square_size):
@@ -15,13 +16,26 @@ def calc_chessboard_corners(board_size, square_size):
             corners.append((j*square_size, i*square_size, 0))
     return corners
 
-def draw_axes(img, corners, imgpts):
-    corner = tuple(corners[0].ravel())
-    print("corner", corner)
-    img = cv2.line(img, corner, tuple(imgpts[0].ravel()), (255,0,0), 3)
-    img = cv2.line(img, corner, tuple(imgpts[1].ravel()), (0,255,0), 3)
-    img = cv2.line(img, corner, tuple(imgpts[2].ravel()), (0,0,255), 3)
-    return img
+# translation of opencv drawFrameAxes fn (not available in 3.2) https://github.com/opencv/opencv/blob/b77330bafc497ddf65074783c0e3fb989604b555/modules/calib3d/src/solvepnp.cpp#L92
+def draw_frame_axes(image, cameraMatrix, dist_coeffs, rvec, tvec, length, thickness=3):
+    # type:(cv2.Mat, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, int) -> cv2.Mat
+
+    # project axes points
+    axes_points = []
+    axes_points.append([0, 0, 0]);
+    axes_points.append([length, 0, 0]);
+    axes_points.append([0, length, 0]);
+    axes_points.append([0, 0, length]);
+    axes_points = np.array(axes_points, dtype=np.float64)
+    # image_pts = [] # type: list[tuple[float,float]];
+    img_pts, jacob = cv2.projectPoints(axes_points, rvec, tvec, cameraMatrix, dist_coeffs);
+    img_pts = np.array(img_pts, dtype=np.int)
+    
+    # draw axes lines
+    cv2.line(image, tuple(img_pts[0].ravel()), tuple(img_pts[1].ravel()), (0, 0, 255), thickness);
+    cv2.line(image, tuple(img_pts[0].ravel()), tuple(img_pts[2].ravel()), (0, 255, 0), thickness);
+    cv2.line(image, tuple(img_pts[0].ravel()), tuple(img_pts[3].ravel()), (255, 0, 0), thickness);
+    return image
 
 def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     # type:(list[cv2.Mat], tuple[int, int], float) -> None
@@ -46,7 +60,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # corners2 = cv2.cornerSubPix(greyimg, corners, (11,11), (-1,-1), criteria)
         cv2.drawChessboardCorners(img_corners, chessboard_interior_dimensions, corners, ret)
         cv2.namedWindow("Chessboard corners", cv2.WINDOW_NORMAL)
-        cv2.imshow("Chessboard corners", img_corners)
+        img_corners_resized = cv2.resize(img_corners, (500,500))
+        cv2.imshow("Chessboard corners", img_corners_resized)
 
         objPts = calc_chessboard_corners(chessboard_interior_dimensions, square_size_m)
         objPtsPlanarList = [] # type: list[tuple[float, float]]
@@ -64,16 +79,16 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         c3 = np.cross(c1, c2)
 
         tvec = H[:,2] # extract translation vector from homog coords
-        print("tvec: %s" % tvec)
+        # print("tvec: %s" % tvec)
         R = np.zeros((3,3), dtype=np.float64)
         for i in range(3):
             R[i,0] = c1[i]
             R[i,1] = c2[i]
             R[i,2] = c3[i]
 
-        print("R (before polar decomposition):")
-        print(R) 
-        print("det(R): %f\n" % np.linalg.det(R))
+        # print("R (before polar decomposition):")
+        # print(R) 
+        # print("det(R): %f\n" % np.linalg.det(R))
         
         # TODO - fix stuff under here vvv
         # W, U, Vt # Mat_<double>
@@ -86,9 +101,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             Vt[2,1] *= -1
             Vt[2,2] *= -1
             R = U*Vt
-        print("R (after polar decomposition):")
-        print(R)
-        print("det(R): %f\n" % np.linalg.det(R))
+        # print("R (after polar decomposition):")
+        # print(R)
+        # print("det(R): %f\n" % np.linalg.det(R))
 
         camera_matrix = np.array([
             [1, 0, 0],
@@ -97,44 +112,19 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         ], dtype=np.float64)
         dist_coeffs = np.array([], dtype=np.float64)
         rvec, jacobian = cv2.Rodrigues(R) # converts rotation matrix to rotation vector using Rodrigues transform
-        print("rvec: \n%s" % rvec)
-        # cv2.drawFrameAxes(
-        #     img_pose, # img
-        #     camera_matrix, # cameraMatrix - ideal
-        #     dist_coeffs, # distCoeffs - 0
-        #     rvec, # rot vec
-        #     tvec, # trans vec
-        #     2*square_size_m) # length
-        img_pose = draw_axes(img_pose, corners, objPtsPlanar)
+        # print("rvec: \n%s" % rvec)
+        draw_frame_axes(
+            img_pose, # img
+            camera_matrix, # cameraMatrix - ideal
+            dist_coeffs, # distCoeffs - 0
+            rvec, # rot vec
+            tvec, # trans vec
+            2*square_size_m) # length
+        # img_pose = draw_axes(img_pose, corners, objPtsPlanar)
         # optional thickness not included
-        cv2.imshow("Pose from coplanar points", img_pose)
+        img_pose_resized = cv2.resize(img_pose, (500,500))
+        cv2.imshow("Pose from coplanar points", img_pose_resized)
         cv2.waitKey(0);
-        
-        
-        
-        # cbx, cby = chessboard_interior_dimensions
-        # criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-        # objp = np.zeros(
-        #     (cbx*cby,3),#(6*7,3), 
-        #     np.float32)
-        # objp[:,:2] = np.mgrid[0:cby,0:cbx].T.reshape(-1,2)
-        # axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3)
-        # corners2 = cv2.cornerSubPix(
-        #     img_grey,
-        #     corners,(11,11),(-1,-1),
-        #     criteria)
-        # # Find the rotation and translation vectors.
-        # ret,rvecs, tvecs = cv2.solvePnP(objp, corners2, camera_matrix, dist_coeffs)
-        # # project 3D points to image plane
-        # imgpts, jac = cv2.projectPoints(axis, rvecs, tvecs, camera_matrix, dist_coeffs)
-        # img = draw_axes(img_pose, corners2, imgpts)
-        # cv2.namedWindow("image w/ axes", cv2.WINDOW_NORMAL)
-        # cv2.imshow("image w/ axes", img)
-        # cv2.waitKey(0)
-
-        # detect laser points P_i and triangulate to form lines
-        # intersect each line with the plane pi_c and append the 3D points into P
-        pass
     cv2.destroyAllWindows()
 
     # RANSAC: form M subjects of k points from P
