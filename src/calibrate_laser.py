@@ -120,7 +120,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         dist = None
         criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
-        print("type %s" % frame.dtype)
         objp = np.zeros((s[0]*s[1], 3), dtype=np.float32)
         objp[:,:2] = np.mgrid[0:s[0],0:s[1]].T.reshape(-1,2) # wtf is this
         axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3)
@@ -141,10 +140,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         img = draw(frame, corners2, imgpts)
         cv.imshow('img', img)
 
-        k = cv.waitKey(0) & 0xFF
-        if k == ord('s'):
-            cv.imwrite('pose'+frame, img)
-        cv.destroyAllWindows()
+        # k = cv.waitKey(0) & 0xFF
+        # if k == ord('s'):
+        #     cv.imwrite('pose'+frame, img)
+        # cv.destroyAllWindows()
 
 
         # ==== Find laser line homography ====
@@ -157,21 +156,45 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # response graph, am waiting on response on that
         # these are from green laser light with 532 nm wavelength and 
         # a Sony ICX674 sensor
+        # these values seems to work reasonably well so I will use them in the mean time
         k_r = 0.08
         k_g = 0.85
         k_b = 0.2
 
         # I_L = f(k_r,k_g,k_b) = k_r*I_R + k_g*I_G + k_b*I_B, ||(k_r,k_g,k_b)|| <= 1
         I_L = k_r * frame[:,:,0] + k_g * frame[:,:,1] + k_b * frame[:,:,2]
+        I_L_img = cv.resize(
+            I_L, 
+            ( int( I_L.shape[1] * (500./I_L.shape[0]) ), 500 ))
+        I_L_img /= 255.0
+        cv.imshow('reward', I_L_img)
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
         # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
         winlen = 10
         rows = frame.shape[0]
-        G = 0
-        for winstart in range(rows-winlen):
-            for row in range(winstart, winstart+winlen):
-                G += (1 - 2*abs(winstart - row + (winlen - 1) / 2)) * np.max(I_L[:,row]) #idk if this last part is right
-        
+        cols = frame.shape[1]
+        gvals = []
+        for col in range(cols):
+            print("col %d" % col)
+            maxwin = 0
+            maxg = 0
+            for winstart in range(rows-winlen):
+                # print("win %d" % winstart)
+                G = 0
+                for row in range(winstart, winstart+winlen):
+                    # print("row %d" % row)
+                    G += (1 - 2*abs(winstart - row + (winlen - 1) / 2)) * I_L[row,col] #idk if this last part is right
+                # if G > -1000:
+                gvals.append(G)
+                # gvals.append(G)
+        gvals.sort(reverse=True)
+        num_lines = 15
+        expectedgoodgvals = rows * num_lines
+        gvals = gvals[:expectedgoodgvals]
+        print(gvals)
+        print("min, max, mean, med")
+        print(min(gvals), max(gvals), np.mean(gvals), np.median(gvals))
+        cv.waitKey(0)
 
     # RANSAC: form M subjects of k points from P
     subsets = []
