@@ -2,7 +2,7 @@
 Undergraduate thesis work on underwater active stereo.
 
 # Calibration [WIP]
-`calibrate_laser.py` in the `src` directory contains a script for extracting extrinsic parameters of the laser relative to a given camera with known instric parameters (camera matrix and distortion coefficients).
+`calibrate_laser.py` in the `src` directory contains a script for extracting extrinsic parameters of the laser relative to a given rectified images and the camera matrix.
 
 Currently, this file will extract the homography of a chessboard plane in frame and identify continguous laser patches in the image. 
 
