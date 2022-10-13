@@ -6,6 +6,7 @@ import cv2 as cv
 import os
 from optparse import OptionParser
 import math
+from datetime import datetime as dt
 
 class Cam:
     '''Left Camera Params'''
@@ -173,12 +174,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         imgdisp = cv.resize(img, disp_size)
         cv.imshow('img', imgdisp)
 
-        # k = cv.waitKey(0) & 0xFF
-        # if k == ord('s'):
-        #     cv.imwrite('pose'+frame, img)
-        # cv.destroyAllWindows()
-
-
         # ==== Find laser line homography ====
         # in our case for calibration we assume the laser line we see is the 
         # intersection of the chessboard plane and the laser planes
@@ -210,57 +205,16 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             maxwin = 0
             maxg = 0
             for winstart in range(rows-winlen):
-                # print("win %d" % winstart)
                 G = 0
                 for row in range(winstart, winstart+winlen):
-                    # print("row %d" % row)
                     G += (1 - 2*abs(winstart - row + (winlen - 1) / 2)) * I_L[row,col] #idk if this last part is right
-                # if G > -1000:
                 gvals.append((col, winstart+winlen//2, G))
-                # gvals.append(G)
         
         gvals.sort(key=lambda x: x[2])
         num_lines = 15
         expectedgoodgvals = rows * num_lines
         gvals = gvals[:expectedgoodgvals]
         gvals = np.array(gvals)
-
-        # maybe revisit this if subpixel detection does not properly handle outliers
-        # gvals = np.array(gvals)
-        # gvalsorted = np.sort(gvals, 0)
-        # medx = np.median(gvalsorted[:,0])
-        # medy = np.median(gvalsorted[:,1])
-        # dists = np.sqrt((gvals[:,0] - medx)**2 + (gvals[:,1] - medy)**2)
-        # dists = np.reshape(dists, (dists.shape[0],1))
-        # print(dists.shape)
-        # print("dists %s" % dists)
-        # sorteddists = np.sort(dists, 0)
-        # gvals = np.append(gvals, dists, 1)
-        # gvalsorted = np.append(gvalsorted, sorteddists, 1)
-
-        # percentoutliers = 0.5 # percent for each side to consider outliers, probably depends on the amounts of points you expect, though
-
-        # outlier_thresh = np.percentile(gvalsorted[:,3], 100-percentoutliers),
-        # print("outlier px dist thresh: %d" % outlier_thresh)
-
-        # # get median values for x and y of lines
-        # # check if abs(medx-x) + abs(medy-y) > distance from maybe 95th percentile?
-        # gval_filter = gvals[:,3] < outlier_thresh
-        # print("caught values: ")
-        # print(gvals[~gval_filter])
-        # for idx, val in enumerate(gval_filter):
-        #     gval = gvals[idx]
-        #     if not val:
-        #         print("pt %d at (%d,%d) has dist %f from center" % (idx, int(gval[1]), int(gval[2]), gval[3]))
-        #     # elif gval[3] > outlier_thresh:
-        #         # print("pt %d at (%d,%d) should have been removed & has dist %f from center" % (idx, int(gval[1]), int(gval[2]), gval[3]))
-        # print(gval_filter)
-        # gvals = gvals[gval_filter]
-
-        # print(gvals)
-        # print("min, max, mean, med, max dist from center")
-        # weights = gvals[:,2]
-        # print(np.min(weights), np.max(weights), np.mean(weights), np.median(weights), np.max(gvals[:,3]))
              
         potential_lines = frame.copy()
         for val in gvals:
@@ -296,11 +250,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 laser_subpixels[y].append(x + subpixel_offset)
             else:
                 laser_subpixels[y] = [x + subpixel_offset]
-            # print("x,y,sp_offset", x, y, subpixel_offset)
             laser_img[y,int(x+subpixel_offset)] = 1.0
         
-        cv.imshow("laserimg", laser_img)
-        # print(laser_subpixels)
+        laser_disp_img = cv.dilate(laser_img, (3,3), iterations=2)
+        laser_disp_img = cv.resize(laser_disp_img, disp_size)
+        cv.imshow("laserimg", laser_disp_img)
 
         laser_patch_img = laser_img.copy()
         patches = []
@@ -323,8 +277,15 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         
         cv.imshow("laserpatchimg", laser_patch_img)
 
-
-        cv.waitKey(0)
+        k = cv.waitKey(0) & 0xFF
+        if k == ord('s'):
+            t = str(dt.now())
+            cv.imwrite('pose' + t + '.png', img)
+            cv.imwrite('laserreward' + t + '.png', I_L)
+            cv.imwrite('laserlinepts' + t + '.png', potential_lines)
+            cv.imwrite('lasersubpxpts' + t + '.png', laser_img * 255)
+            cv.imwrite('laserpatches' + t + '.png', laser_patch_img * 255)
+        cv.destroyAllWindows()
 
     # RANSAC: form M subjects of k points from P
     subsets = []
