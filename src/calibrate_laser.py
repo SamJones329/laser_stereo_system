@@ -104,6 +104,34 @@ def draw(img, corners, imgpts):
     img = cv.line(img, corner, tuple(imgpts[2].ravel()), (0,0,255), 5)
     return img
 
+def recurse_patch(row, col, patch, img):
+    # type:(int, int, set, cv.Mat) -> None
+    # check neighbors
+    up = row-1
+    if up >= 0 and img[up, col] > 0: # up
+        patch.add((up, col))
+        img[up,col] = 0.
+        recurse_patch(up, col, patch, img)
+
+    down = row+1
+    if down <= img.shape[0] and img[down, col] > 0: # down
+        patch.add((down, col))
+        img[down,col] = 0.
+        recurse_patch(down, col, patch, img)
+
+    left = col-1
+    if left >= 0 and img[row, left] > 0: # left
+        patch.add((row, left))
+        img[row,left] = 0.
+        recurse_patch(row, left, patch, img)
+
+    right = col+1
+    if right <= img.shape[1] and img[row, right] > 0: # right
+        patch.add((row, right))
+        img[row,right] = 0.
+        recurse_patch(row, right, patch, img)
+
+
 def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     # type:(list[cv.Mat], tuple[int, int], float) -> None
     '''
@@ -173,7 +201,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         cv.imshow('reward', I_L_img)
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
         # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
-        winlen = 10
+        winlen = 3
         rows = frame.shape[0]
         cols = frame.shape[1]
         gvals = []
@@ -188,20 +216,114 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     # print("row %d" % row)
                     G += (1 - 2*abs(winstart - row + (winlen - 1) / 2)) * I_L[row,col] #idk if this last part is right
                 # if G > -1000:
-                gvals.append((col, winstart+5, G))
+                gvals.append((col, winstart+winlen//2, G))
                 # gvals.append(G)
-        gvals.sort(reverse=False, key=lambda x: x[2])
+        
+        gvals.sort(key=lambda x: x[2])
         num_lines = 15
         expectedgoodgvals = rows * num_lines
         gvals = gvals[:expectedgoodgvals]
-        print(gvals)
-        print("min, max, mean, med")
-        print(min(gvals), max(gvals), np.mean(gvals), np.median(gvals))
+        gvals = np.array(gvals)
+
+        # maybe revisit this if subpixel detection does not properly handle outliers
+        # gvals = np.array(gvals)
+        # gvalsorted = np.sort(gvals, 0)
+        # medx = np.median(gvalsorted[:,0])
+        # medy = np.median(gvalsorted[:,1])
+        # dists = np.sqrt((gvals[:,0] - medx)**2 + (gvals[:,1] - medy)**2)
+        # dists = np.reshape(dists, (dists.shape[0],1))
+        # print(dists.shape)
+        # print("dists %s" % dists)
+        # sorteddists = np.sort(dists, 0)
+        # gvals = np.append(gvals, dists, 1)
+        # gvalsorted = np.append(gvalsorted, sorteddists, 1)
+
+        # percentoutliers = 0.5 # percent for each side to consider outliers, probably depends on the amounts of points you expect, though
+
+        # outlier_thresh = np.percentile(gvalsorted[:,3], 100-percentoutliers),
+        # print("outlier px dist thresh: %d" % outlier_thresh)
+
+        # # get median values for x and y of lines
+        # # check if abs(medx-x) + abs(medy-y) > distance from maybe 95th percentile?
+        # gval_filter = gvals[:,3] < outlier_thresh
+        # print("caught values: ")
+        # print(gvals[~gval_filter])
+        # for idx, val in enumerate(gval_filter):
+        #     gval = gvals[idx]
+        #     if not val:
+        #         print("pt %d at (%d,%d) has dist %f from center" % (idx, int(gval[1]), int(gval[2]), gval[3]))
+        #     # elif gval[3] > outlier_thresh:
+        #         # print("pt %d at (%d,%d) should have been removed & has dist %f from center" % (idx, int(gval[1]), int(gval[2]), gval[3]))
+        # print(gval_filter)
+        # gvals = gvals[gval_filter]
+
+        # print(gvals)
+        # print("min, max, mean, med, max dist from center")
+        # weights = gvals[:,2]
+        # print(np.min(weights), np.max(weights), np.mean(weights), np.median(weights), np.max(gvals[:,3]))
+             
         potential_lines = frame.copy()
         for val in gvals:
-            cv.circle(potential_lines, val[:2], 5, (0,0,255))
+            x = int(val[0])
+            y = int(val[1])
+            cv.circle(potential_lines, (x,y), 3, (0,0,255))
         potential_lines = cv.resize(potential_lines, disp_size)
         cv.imshow("pot lines", potential_lines)
+
+        # figure out how to throw out outliers
+        # maybe generate histogram and use to throw out some points
+
+        # subpixel detection via Gaussian approximation
+        # delta = 1/2 * ( ( ln(f(x-1)) - ln(f(x+1)) ) / ( ln(f(x-1)) - 2ln(f(x)) + ln(f(x+1)) ) )
+        # f(x) = intensity value of particular row at pixel x
+        laser_subpixels = {}
+        laser_img = np.full(gray.shape, 0.0, dtype=np.float)
+        for window in gvals:
+            # center of window
+            x, y = int(window[0]), int(window[1])
+            fx = I_L[y,x]
+            fxm = I_L[y,x-1]
+            fxp = I_L[y,x+1]
+            denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
+            if denom == 0:
+                # replace with Center of Moss (CoM5) detector
+                subpixel_offset = 0
+            else:
+                numer = math.log(fxm) - math.log(fxp)
+                subpixel_offset = 0.5 * numer / denom
+            if subpixel_offset > winlen//2: continue
+            if laser_subpixels.has_key(y):
+                laser_subpixels[y].append(x + subpixel_offset)
+            else:
+                laser_subpixels[y] = [x + subpixel_offset]
+            # print("x,y,sp_offset", x, y, subpixel_offset)
+            laser_img[y,int(x+subpixel_offset)] = 1.0
+        
+        cv.imshow("laserimg", laser_img)
+        # print(laser_subpixels)
+
+        laser_patch_img = laser_img.copy()
+        patches = []
+        # find patches
+        for row in range(laser_patch_img.shape[0]):
+            for col in range(laser_patch_img.shape[1]):
+                val = laser_patch_img[row,col]
+                if val > 0: # found laser px, look for patch
+                    patch = {(row,col)}
+                    laser_patch_img[row,col] = 0.
+                    recurse_patch(row, col, patch, laser_patch_img)
+                    if len(patch) >= 5:
+                        patches.append(patch)
+        print(patches)
+
+        for patch in patches:
+            for val in patch:
+                row, col = val
+                laser_patch_img[row, col] = 1.
+        
+        cv.imshow("laserpatchimg", laser_patch_img)
+
+
         cv.waitKey(0)
 
     # RANSAC: form M subjects of k points from P
