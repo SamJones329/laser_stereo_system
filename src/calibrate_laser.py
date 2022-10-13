@@ -113,6 +113,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     s = chessboard_interior_dimensions
     P = [] # 3D pts
     for frame in data:
+        # scale down display images to have 500 px height and preserve aspect ratio
+        disp_size = ( int( frame.shape[1] * (500./frame.shape[0]) ), 500 )
+
         # ==== Find chessboard plane homography ====
         # https://www.youtube.com/watch?v=US9p9CL9Ywg
         mtx = Cam.K
@@ -137,8 +140,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # project 3d pts to image plane
         imgpts, jac = cv.projectPoints(axis, rvecs, tvecs, mtx, dist)
 
-        img = draw(frame, corners2, imgpts)
-        cv.imshow('img', img)
+        img = frame.copy()
+        img = draw(img, corners2, imgpts)
+        imgdisp = cv.resize(img, disp_size)
+        cv.imshow('img', imgdisp)
 
         # k = cv.waitKey(0) & 0xFF
         # if k == ord('s'):
@@ -163,9 +168,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
         # I_L = f(k_r,k_g,k_b) = k_r*I_R + k_g*I_G + k_b*I_B, ||(k_r,k_g,k_b)|| <= 1
         I_L = k_r * frame[:,:,0] + k_g * frame[:,:,1] + k_b * frame[:,:,2]
-        I_L_img = cv.resize(
-            I_L, 
-            ( int( I_L.shape[1] * (500./I_L.shape[0]) ), 500 ))
+        I_L_img = cv.resize(I_L, disp_size)
         I_L_img /= 255.0
         cv.imshow('reward', I_L_img)
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
@@ -185,15 +188,20 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     # print("row %d" % row)
                     G += (1 - 2*abs(winstart - row + (winlen - 1) / 2)) * I_L[row,col] #idk if this last part is right
                 # if G > -1000:
-                gvals.append(G)
+                gvals.append((col, winstart+5, G))
                 # gvals.append(G)
-        gvals.sort(reverse=True)
+        gvals.sort(reverse=False, key=lambda x: x[2])
         num_lines = 15
         expectedgoodgvals = rows * num_lines
         gvals = gvals[:expectedgoodgvals]
         print(gvals)
         print("min, max, mean, med")
         print(min(gvals), max(gvals), np.mean(gvals), np.median(gvals))
+        potential_lines = frame.copy()
+        for val in gvals:
+            cv.circle(potential_lines, val[:2], 5, (0,0,255))
+        potential_lines = cv.resize(potential_lines, disp_size)
+        cv.imshow("pot lines", potential_lines)
         cv.waitKey(0)
 
     # RANSAC: form M subjects of k points from P
