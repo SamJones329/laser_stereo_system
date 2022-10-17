@@ -196,7 +196,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         cv.imshow('reward', I_L_img)
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
         # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
-        winlen = 7
+        winlen = 5
         rows = frame.shape[0]
         cols = frame.shape[1]
         gvals = []
