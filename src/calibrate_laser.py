@@ -196,12 +196,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         cv.imshow('reward', I_L_img)
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
         # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
-        winlen = 3
+        winlen = 7
         rows = frame.shape[0]
         cols = frame.shape[1]
         gvals = []
         for col in range(cols):
-            print("col %d" % col)
+            # print("col %d" % col)
             maxwin = 0
             maxg = 0
             for winstart in range(rows-winlen):
@@ -212,7 +212,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         
         gvals.sort(key=lambda x: x[2])
         num_lines = 15
-        expectedgoodgvals = rows * num_lines
+        expectedgoodgvals = int(rows * num_lines * 1.4) # room for plenty of outliers
         gvals = gvals[:expectedgoodgvals]
         gvals = np.array(gvals)
              
@@ -235,26 +235,33 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         for window in gvals:
             # center of window
             x, y = int(window[0]), int(window[1])
+            # f(x), f(x-1), f(x+1)
             fx = I_L[y,x]
             fxm = I_L[y,x-1]
             fxp = I_L[y,x+1]
             denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
             if denom == 0:
                 # replace with Center of Moss (CoM5) detector
-                subpixel_offset = 0
+                fxp2 = I_L[y,x+2] # f(x+2)
+                fxm2 = I_L[y,x-2] # f(x-2)
+                num = 2*fxp2 + fxp - fxm - 2*fxm2
+                denom = fxm2 + fxm + fx + fxp + fxp2
+                subpixel_offset = num / denom
             else:
                 numer = math.log(fxm) - math.log(fxp)
                 subpixel_offset = 0.5 * numer / denom
-            if subpixel_offset > winlen//2: continue
+            if subpixel_offset > winlen//2 \
+                    or x + subpixel_offset < 0 \
+                    or x + subpixel_offset > laser_img.shape[1]: 
+                continue
             if laser_subpixels.has_key(y):
                 laser_subpixels[y].append(x + subpixel_offset)
             else:
                 laser_subpixels[y] = [x + subpixel_offset]
             laser_img[y,int(x+subpixel_offset)] = 1.0
         
-        laser_disp_img = cv.dilate(laser_img, (3,3), iterations=2)
-        laser_disp_img = cv.resize(laser_disp_img, disp_size)
-        cv.imshow("laserimg", laser_disp_img)
+        # laser_disp_img = cv.resize(laser_img, disp_size)
+        cv.imshow("laserimg", laser_img)
 
         laser_patch_img = laser_img.copy()
         patches = []
