@@ -152,9 +152,20 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         dist = None
         criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
+        # init container for obj pts
         objp = np.zeros((s[0]*s[1], 3), dtype=np.float32)
-        objp[:,:2] = np.mgrid[0:s[0],0:s[1]].T.reshape(-1,2) # wtf is this
-        axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3)
+
+        # makes a grid of points corresponding to each chessboard square from the chessboards 
+        # ref frame, meaning that each chessboard square has a defining dimension of 1 "unit"
+        # therefore must scale these according to your selected units (m) in order to get actual 
+        # object points
+        objp[:,:2] = np.mgrid[0:s[0],0:s[1]].T.reshape(-1,2) 
+        objp *= square_size_m 
+        print("object points")
+        print(objp)
+
+        # scale axes to be in appropriate coords as well
+        axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3) * square_size_m
 
         gray = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
         ret, corners = cv.findChessboardCorners(gray, s)
@@ -241,7 +252,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             fxp = I_L[y,x+1]
             denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
             if denom == 0:
-                # replace with Center of Moss (CoM5) detector
+                # 5px Center of Mass (CoM5) detector
                 fxp2 = I_L[y,x+2] # f(x+2)
                 fxm2 = I_L[y,x-2] # f(x-2)
                 num = 2*fxp2 + fxp - fxm - 2*fxm2
@@ -275,7 +286,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     recurse_patch(row, col, patch, laser_patch_img)
                     if len(patch) >= 5:
                         patches.append(patch)
-        print(patches)
+        # print(patches)
 
         for patch in patches:
             for val in patch:
