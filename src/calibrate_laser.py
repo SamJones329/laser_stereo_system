@@ -109,26 +109,26 @@ def recurse_patch(row, col, patch, img):
     # type:(int, int, set, cv.Mat) -> None
     # check neighbors
     up = row-1
-    if up >= 0 and img[up, col] > 0: # up
-        patch.add((up, col))
+    if up >= 0 and img[up, col] > 1e-6: # up
+        patch.append((up, col, img[up,col]))
         img[up,col] = 0.
         recurse_patch(up, col, patch, img)
 
     down = row+1
-    if down <= img.shape[0] and img[down, col] > 0: # down
-        patch.add((down, col))
+    if down <= img.shape[0] and img[down, col] > 1e-6: # down
+        patch.append((down, col, img[down,col]))
         img[down,col] = 0.
         recurse_patch(down, col, patch, img)
 
     left = col-1
-    if left >= 0 and img[row, left] > 0: # left
-        patch.add((row, left))
+    if left >= 0 and img[row, left] > 1e-6: # left
+        patch.append((row, left, img[row,left]))
         img[row,left] = 0.
         recurse_patch(row, left, patch, img)
 
     right = col+1
-    if right <= img.shape[1] and img[row, right] > 0: # right
-        patch.add((row, right))
+    if right <= img.shape[1] and img[row, right] > 1e-6: # right
+        patch.append((row, right, img[row,right]))
         img[row,right] = 0.
         recurse_patch(row, right, patch, img)
 
@@ -226,14 +226,34 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         expectedgoodgvals = int(rows * num_lines * 1.4) # room for plenty of outliers
         gvals = gvals[:expectedgoodgvals]
         gvals = np.array(gvals)
+        # ming = np.min(gvals)
+        # gvals += ming * -1
+        # gvalsnorm = np.array(gvals, dtype=np.float)
+        # gsum = np.sum(gvals)
+        # print("gsum %f" % gsum)
+        # gmean = np.mean(gvals)
+        # print("gmean %f" % gmean)
+        # gvalsnorm /= gsum
+        # gnormmedian = np.median(gvalsnorm)
+        # print("gnormmedian %f" % gnormmedian)
+        # gnormscale = 0.5 / gnormmedian
+        # print("gnormscale %f" % gnormscale)
+        # gvalsnorm *= gnormscale
+
              
         potential_lines = frame.copy()
-        for val in gvals:
+        # potential_lines2 = np.zeros(gray.shape)
+        for idx, val in enumerate(gvals):
             x = int(val[0])
             y = int(val[1])
             cv.circle(potential_lines, (x,y), 3, (0,0,255))
+            # potential_lines2[y,x] = gvalsnorm[idx,2]
+            # print("gval @ x,y (%d,%d) = %f" % (x, y, gvalsnorm[idx,2]))
         potential_lines = cv.resize(potential_lines, disp_size)
+        # print(potential_lines2)
+        # potential_lines2 = cv.resize(potential_lines2, disp_size)
         cv.imshow("pot lines", potential_lines)
+        # cv.imshow("pot lines2", potential_lines2)
 
         # figure out how to throw out outliers
         # maybe generate histogram and use to throw out some points
@@ -241,7 +261,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # subpixel detection via Gaussian approximation
         # delta = 1/2 * ( ( ln(f(x-1)) - ln(f(x+1)) ) / ( ln(f(x-1)) - 2ln(f(x)) + ln(f(x+1)) ) )
         # f(x) = intensity value of particular row at pixel x
-        laser_subpixels = {}
+        # laser_subpixels = {}
+        laser_subpixels = np.full(gray.shape, 0.0, dtype=np.float)
         laser_img = np.full(gray.shape, 0.0, dtype=np.float)
         for window in gvals:
             # center of window
@@ -265,35 +286,52 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     or x + subpixel_offset < 0 \
                     or x + subpixel_offset > laser_img.shape[1]: 
                 continue
-            if laser_subpixels.has_key(y):
-                laser_subpixels[y].append(x + subpixel_offset)
-            else:
-                laser_subpixels[y] = [x + subpixel_offset]
+            # if laser_subpixels.has_key(y):
+                # laser_subpixels[y].append(x + subpixel_offset)
+            # else:
+                # laser_subpixels[y] = [x + subpixel_offset]
             laser_img[y,int(x+subpixel_offset)] = 1.0
+            laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
+
         
         # laser_disp_img = cv.resize(laser_img, disp_size)
         cv.imshow("laserimg", laser_img)
 
-        laser_patch_img = laser_img.copy()
+        # laser_patch_img = laser_img.copy()
         patches = []
         # find patches
-        for row in range(laser_patch_img.shape[0]):
-            for col in range(laser_patch_img.shape[1]):
-                val = laser_patch_img[row,col]
-                if val > 0: # found laser px, look for patch
-                    patch = {(row,col)}
-                    laser_patch_img[row,col] = 0.
-                    recurse_patch(row, col, patch, laser_patch_img)
+        for row in range(laser_subpixels.shape[0]):
+            for col in range(laser_subpixels.shape[1]):
+                val = laser_subpixels[row,col]
+                if val > 1e-6: # found laser px, look for patch
+                    patch = [(row,col,val)]
+                    laser_subpixels[row,col] = 0.
+                    recurse_patch(row, col, patch, laser_subpixels)
                     if len(patch) >= 5:
                         patches.append(patch)
         # print(patches)
 
+        laser_patch_img = np.zeros(gray.shape)
         for patch in patches:
             for val in patch:
-                row, col = val
+                # print(val)
+                row, col, _ = val
                 laser_patch_img[row, col] = 1.
         
         cv.imshow("laserpatchimg", laser_patch_img)
+
+        # just multiply img pts by calibration plane homography to get 3D pts
+        H, mask = cv.findHomography(corners, objp)
+        print(H, mask)
+        pts = []
+        for patch in patches:
+            for pt in patch:
+                # x, y
+                imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
+                newpt = np.dot(H, imgpt)
+                pts.append(newpt)
+                # pts.append((pt[1] + pt[2], pt[0]))
+        # print(pts) figure out way to plot this
 
         k = cv.waitKey(0) & 0xFF
         if k == ord('s'):
