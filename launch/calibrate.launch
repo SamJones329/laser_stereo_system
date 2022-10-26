@@ -1,0 +1,18 @@
+<launch>
+
+    <arg name="size" default="9x6" />
+    <arg name="square" default="0.02884" />
+    <arg name="folder" default="$(find laser_stereo_system)/calib_imgs" />
+
+    <!-- RViz -->
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find laser_stereo_system)/config/laser_calib.rviz" output="screen"/>
+
+    <!-- Calibration Node -->
+    <node 
+        pkg="laser_stereo_system" 
+        type="calibrate_laser.py" 
+        name="calibrate_laser" 
+        output="screen"
+        args="-s $(arg size) -q $(arg square) -f $(arg folder)"
+    />
+</launch>

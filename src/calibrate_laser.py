@@ -7,6 +7,10 @@ import os
 from optparse import OptionParser
 import math
 from datetime import datetime as dt
+import numpy as np
+from sensor_msgs.msg import PointCloud2
+from sensor_msgs import point_cloud2
+from std_msgs.msg import Header
 
 class Cam:
     '''Left Camera Params'''
@@ -139,9 +143,13 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     Extracts extrinsic parameters between calibrated 
     camera and horizontal lines laser light structure
     '''
+
+    ptpub = rospy.Publisher('chessboard_pts', PointCloud2, queue_size=10)
+
     s = chessboard_interior_dimensions
     P = [] # 3D pts
     for frame in data:
+
         # scale down display images to have 500 px height and preserve aspect ratio
         disp_size = ( int( frame.shape[1] * (500./frame.shape[0]) ), 500 )
 
@@ -161,8 +169,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # object points
         objp[:,:2] = np.mgrid[0:s[0],0:s[1]].T.reshape(-1,2) 
         objp *= square_size_m 
-        print("object points")
-        print(objp)
+        # print("object points")
+        # print(objp)
 
         # scale axes to be in appropriate coords as well
         axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3) * square_size_m
@@ -212,7 +220,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         cols = frame.shape[1]
         gvals = []
         for col in range(cols):
-            # print("col %d" % col)
             maxwin = 0
             maxg = 0
             for winstart in range(rows-winlen):
@@ -226,34 +233,14 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         expectedgoodgvals = int(rows * num_lines * 1.4) # room for plenty of outliers
         gvals = gvals[:expectedgoodgvals]
         gvals = np.array(gvals)
-        # ming = np.min(gvals)
-        # gvals += ming * -1
-        # gvalsnorm = np.array(gvals, dtype=np.float)
-        # gsum = np.sum(gvals)
-        # print("gsum %f" % gsum)
-        # gmean = np.mean(gvals)
-        # print("gmean %f" % gmean)
-        # gvalsnorm /= gsum
-        # gnormmedian = np.median(gvalsnorm)
-        # print("gnormmedian %f" % gnormmedian)
-        # gnormscale = 0.5 / gnormmedian
-        # print("gnormscale %f" % gnormscale)
-        # gvalsnorm *= gnormscale
-
              
         potential_lines = frame.copy()
-        # potential_lines2 = np.zeros(gray.shape)
         for idx, val in enumerate(gvals):
             x = int(val[0])
             y = int(val[1])
             cv.circle(potential_lines, (x,y), 3, (0,0,255))
-            # potential_lines2[y,x] = gvalsnorm[idx,2]
-            # print("gval @ x,y (%d,%d) = %f" % (x, y, gvalsnorm[idx,2]))
         potential_lines = cv.resize(potential_lines, disp_size)
-        # print(potential_lines2)
-        # potential_lines2 = cv.resize(potential_lines2, disp_size)
         cv.imshow("pot lines", potential_lines)
-        # cv.imshow("pot lines2", potential_lines2)
 
         # figure out how to throw out outliers
         # maybe generate histogram and use to throw out some points
@@ -286,10 +273,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     or x + subpixel_offset < 0 \
                     or x + subpixel_offset > laser_img.shape[1]: 
                 continue
-            # if laser_subpixels.has_key(y):
-                # laser_subpixels[y].append(x + subpixel_offset)
-            # else:
-                # laser_subpixels[y] = [x + subpixel_offset]
             laser_img[y,int(x+subpixel_offset)] = 1.0
             laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
 
@@ -297,7 +280,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # laser_disp_img = cv.resize(laser_img, disp_size)
         cv.imshow("laserimg", laser_img)
 
-        # laser_patch_img = laser_img.copy()
         patches = []
         # find patches
         for row in range(laser_subpixels.shape[0]):
@@ -309,12 +291,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     recurse_patch(row, col, patch, laser_subpixels)
                     if len(patch) >= 5:
                         patches.append(patch)
-        # print(patches)
 
         laser_patch_img = np.zeros(gray.shape)
         for patch in patches:
             for val in patch:
-                # print(val)
                 row, col, _ = val
                 laser_patch_img[row, col] = 1.
         
@@ -322,7 +302,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
         # just multiply img pts by calibration plane homography to get 3D pts
         H, mask = cv.findHomography(corners, objp)
-        print(H, mask)
+        print(H)
         pts = []
         for patch in patches:
             for pt in patch:
@@ -330,8 +310,14 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
                 newpt = np.dot(H, imgpt)
                 pts.append(newpt)
-                # pts.append((pt[1] + pt[2], pt[0]))
         # print(pts) figure out way to plot this
+
+        h = Header()
+        h.frame_id = "/world"
+        h.stamp = rospy.Time.now()
+        pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
+        ptpub.publish(pc2msg)
+
 
         k = cv.waitKey(0) & 0xFF
         if k == ord('s'):
@@ -342,6 +328,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             cv.imwrite('lasersubpxpts' + t + '.png', laser_img * 255)
             cv.imwrite('laserpatches' + t + '.png', laser_patch_img * 255)
         cv.destroyAllWindows()
+
+
+
 
     # RANSAC: form M subjects of k points from P
     subsets = []
@@ -355,6 +344,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     # return plane that fits most points/minimizes distance d_j
 
 if __name__ == "__main__":
+    rospy.init_node('calibrate_laser')
+
     print("numpy version: ", np.__version__)
     print("\nparsing args...\n")
     parser = OptionParser("%prog --size SIZE --square SQUARE --folder FOLDER",
