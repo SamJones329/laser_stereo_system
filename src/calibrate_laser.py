@@ -136,6 +136,59 @@ def recurse_patch(row, col, patch, img):
         img[row,right] = 0.
         recurse_patch(row, right, patch, img)
 
+def angle_wrap(ang):
+    """
+    Return the angle normalized between [-pi, pi].
+
+    Works with numbers and numpy arrays.
+
+    :param ang: the input angle/s.
+    :type ang: float, numpy.ndarray
+    :returns: angle normalized between [-pi, pi].
+    :rtype: float, numpy.ndarray
+    """
+    ang = ang % (2 * np.pi)
+    if (isinstance(ang, int) or isinstance(ang, float)) and (ang > np.pi):
+        ang -= 2 * np.pi
+    elif isinstance(ang, np.ndarray):
+        ang[ang > np.pi] -= 2 * np.pi
+    return ang
+
+def get_polar_line(line, odom=[0.0, 0.0, 0.0]):
+    """
+    Transform a line from cartesian to polar coordinates.
+
+    Transforms a line from [x1 y1 x2 y2] from the world frame to the
+    vehicle frame using odomotrey [x y ang].
+
+    By default only transforms line to polar without translation.
+
+    :param numpy.ndarray line: line as [x1 y1 x2 y2].
+    :param list odom: the origin of the frame as [x y ang].
+    :returns: the polar line as [range theta].
+    :rtype: :py:obj:`numpy.ndarray`
+    """
+    # Line points
+    x1 = line[0]
+    y1 = line[1]
+    x2 = line[2]
+    y2 = line[3]
+
+    # Compute line (a, b, c) and range
+    line = np.array([y1-y2, x2-x1, x1*y2-x2*y1])
+    pt = np.array([odom[0], odom[1], 1])
+    dist = np.dot(pt, line) / np.linalg.norm(line[:2])
+
+    # print(np.shape(dist))
+    # Compute angle
+    if dist < 0:
+        ang = np.arctan2(line[1], line[0])
+    else:
+        ang = np.arctan2(-line[1], -line[0])
+
+    # Return in the vehicle frame
+    return np.array([np.abs(dist), angle_wrap(ang - odom[2])])
+
 
 def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     # type:(list[cv.Mat], tuple[int, int], float) -> None
@@ -186,7 +239,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         ret, rvecs, tvecs = cv.solvePnP(objp, corners2, mtx, dist)
 
         # project 3d pts to image plane
-        imgpts, jac = cv.projectPoints(axis, rvecs, tvecs, mtx, dist)
+        imgpts, jac = cv.projectPoints(axis, rvecs, tvecs, mtx, dist) # can project more pts with jac?
 
         img = frame.copy()
         img = draw(img, corners2, imgpts)
@@ -297,6 +350,87 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             for val in patch:
                 row, col, _ = val
                 laser_patch_img[row, col] = 1.
+
+        laser_img_8uc1 = np.uint8(laser_patch_img * 255)
+        hlp_laser_img = laser_img_8uc1.copy()
+        hlp_laser_img_disp = frame.copy()
+
+        lines = cv.HoughLinesP(hlp_laser_img, 1, np.pi / 180, 50, None, 100, 50)
+        lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+        print("linesP %s" % lines)
+        if lines is not None:
+            for i in range(0, len(lines)):
+                l = lines[i]
+                cv.line(hlp_laser_img_disp, (l[0], l[1]), (l[2], l[3]), (0,0,255), 3, cv.LINE_AA)
+    
+        cv.imshow("laser_img - 8UC1", laser_img_8uc1)
+        cv.imshow("Detected Lines (in red) - Probabilistic Line Transform", hlp_laser_img_disp)
+
+        # merge similar lines
+        n = 15 # number of laser lines
+        r_thresh = 25
+        # a_thresh = math.pi / 8
+        groups = [[[],[]] for _ in range(n)]
+        groupavgs = np.ndarray((n,2))
+        groupsmade = 0
+        polarlines = [get_polar_line(line) for line in lines]
+        # print("polarlines %s" % polarlines)
+        threwout = 0
+        for polarline in polarlines:
+            # print(polarline)
+            r, a = polarline
+            goodgroup = -1
+            for idx, avg in enumerate(groupavgs):
+                r_avg, a_avg = avg
+                if abs(r-r_avg) < r_thresh: # the thetas will all likely be the same or very similar so we dont care to compare them
+                    goodgroup = idx
+                    break
+            if goodgroup == -1:
+                pass
+                if groupsmade == n:
+                    threwout += 1
+                    # print("throwing out %s" % polarline)
+                    # find best fit? throw out? not sure, will just throw out for now
+                    continue
+                else:
+                    # print("(new group) appending %s to group @ %d: %s" % (polarline, groupsmade, groups[groupsmade]))
+                    groups[groupsmade][0].append(r) # = np.append(groups[groupsmade], polarline, axis=0)
+                    groups[groupsmade][1].append(a)
+                    groupavgs[groupsmade,:] = polarline
+                    groupsmade += 1
+            else:
+                # print("appending %s to group @ %d: %s" % (polarline, groupsmade, groups[goodgroup]))
+                groups[goodgroup][0].append(r)
+                groups[goodgroup][1].append(a)
+                r_avg = sum(groups[goodgroup][0]) / len(groups[goodgroup][0])
+                a_avg = sum(groups[goodgroup][1]) / len(groups[goodgroup][1])
+                groupavgs[goodgroup,:] = r_avg, a_avg
+
+        # print("threw out %d lines" % threwout)
+        # print("%d groups" % (len(groups)))
+        # for group in groups: print(group)
+        # print("newlines/avgs: ")
+        # for idx, avg in enumerate(groupavgs): print("avg %d: %s" % (idx, avg))
+
+
+        mergedlines_img = frame.copy()
+        for i in range(0, len(groupavgs)):
+            rho = groupavgs[i][0]
+            theta = groupavgs[i][1]
+            a = math.cos(theta)
+            b = math.sin(theta)
+            x0 = a * rho
+            y0 = b * rho
+            pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+            pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
+            cv.line(mergedlines_img, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
+        mergedlines_img_disp = cv.resize(mergedlines_img, disp_size)
+        cv.imshow("mergedline", mergedlines_img_disp)
+        
+        # associate each laser patch with a line
+            # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
+            # for speed could just pick one point from patch, will likely be enough given circumstances
+        
         
         cv.imshow("laserpatchimg", laser_patch_img)
 
@@ -310,7 +444,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
                 newpt = np.dot(H, imgpt)
                 pts.append(newpt)
-        # print(pts) figure out way to plot this
+        # print(pts) figure out way to plot this        
+        P.append(pts)
 
         h = Header()
         h.frame_id = "/world"
@@ -330,12 +465,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         cv.destroyAllWindows()
 
 
-
-
     # RANSAC: form M subjects of k points from P
     subsets = []
     for subset in subsets:
         # compute centroid c_j of p_j
+
         # subtrct centroid c_j to all points P
         # use SVD to find the plane normal n_j
         # define pi_j,L : (n_j, c_j)
