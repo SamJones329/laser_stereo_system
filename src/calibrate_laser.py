@@ -281,7 +281,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 x0 = a * rho
                 y0 = b * rho
                 pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-                pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
+                pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
                 cv.line(hlp_laser_img_disp, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
 
         cv.imshow("laser_img - 8UC1", laser_img_8uc1)
@@ -327,6 +327,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # threshold and if lines are spaced consistently 
         # and throw out first line and repeat if so
         mergedlines = groupavgs
+        for idx, line in enumerate(mergedlines):
+            r, th = line
+            if r < 0:
+                th = angle_wrap(th + math.pi)
+                r *= -1
+            mergedlines[idx,:] = r, th
 
         mergedlinesimg = frame.copy()
         print("\nMerged Lines")
@@ -340,7 +346,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 x0 = a * rho
                 y0 = b * rho
                 pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-                pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
+                pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
                 cv.line(mergedlinesimg, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
             except:
                 print("bad line (maybe vertical) %s" % groupavgs[i])
@@ -351,16 +357,16 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             # for speed could just pick one point from patch, will likely be enough given circumstances
         patchgroups = [[] for _ in range(n)]
         for patch in patches:
-            y, x, subpixel_offset_x = patch[0]
-            x += subpixel_offset_x
-            r_p = math.sqrt(x**2 + y**2)
-            th_p = math.atan2(y, x)
-            bestline = 0
-            minval = float('inf')
-            for i in range(len(mergedlines)):
-                r, th = mergedlines[i]
-                d = abs(r - r_p * math.cos(th - th_p))
-                if d < minval:
+            y, x, subpixel_offset_x = patch[0] # get point in patch
+            x += subpixel_offset_x # add subpixel offset to x
+            r_p = math.sqrt(x**2 + y**2) # get radius from origin to pt
+            th_p = math.atan2(y, x) # get theta from +x axis to pt
+            bestline = 0 # idx of best line
+            minval = float('inf') # distance from point to best line
+            for idx, line in enumerate(mergedlines):
+                r, th = mergedlines[idx] # r, th for cur line
+                d = abs(r - r_p * math.cos(th - th_p)) # distance from pt to cur line
+                if d < minval: # if found shorter distance
                     minval = d
                     bestline = idx
             patchgroups[bestline].append(patch)
