@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+from cv2 import minAreaRect
 import rospy
 import numpy as np
 import cv2 as cv
@@ -11,6 +12,8 @@ import numpy as np
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs import point_cloud2
 from std_msgs.msg import Header
+
+from helpers import *
 
 class Cam:
     '''Left Camera Params'''
@@ -93,101 +96,7 @@ class Cam:
     This holds for both images of a stereo pair.
     '''
 
-# modifies in place and returns
-def calc_chessboard_corners(board_size, square_size):
-    # type:(tuple[int, int], float) -> list[tuple[float, float, float]]
-    corners = []
-    for i in range(board_size[0]): # height
-        for j in range(board_size[1]): # width
-            corners.append((j*square_size, i*square_size,0))
-    return corners
 
-def draw(img, corners, imgpts):
-    corner = tuple(corners[0].ravel())
-    img = cv.line(img, corner, tuple(imgpts[0].ravel()), (255,0,0), 5)
-    img = cv.line(img, corner, tuple(imgpts[1].ravel()), (0,255,0), 5)
-    img = cv.line(img, corner, tuple(imgpts[2].ravel()), (0,0,255), 5)
-    return img
-
-def recurse_patch(row, col, patch, img):
-    # type:(int, int, set, cv.Mat) -> None
-    # check neighbors
-    up = row-1
-    if up >= 0 and img[up, col] > 1e-6: # up
-        patch.append((up, col, img[up,col]))
-        img[up,col] = 0.
-        recurse_patch(up, col, patch, img)
-
-    down = row+1
-    if down <= img.shape[0] and img[down, col] > 1e-6: # down
-        patch.append((down, col, img[down,col]))
-        img[down,col] = 0.
-        recurse_patch(down, col, patch, img)
-
-    left = col-1
-    if left >= 0 and img[row, left] > 1e-6: # left
-        patch.append((row, left, img[row,left]))
-        img[row,left] = 0.
-        recurse_patch(row, left, patch, img)
-
-    right = col+1
-    if right <= img.shape[1] and img[row, right] > 1e-6: # right
-        patch.append((row, right, img[row,right]))
-        img[row,right] = 0.
-        recurse_patch(row, right, patch, img)
-
-def angle_wrap(ang):
-    """
-    Return the angle normalized between [-pi, pi].
-
-    Works with numbers and numpy arrays.
-
-    :param ang: the input angle/s.
-    :type ang: float, numpy.ndarray
-    :returns: angle normalized between [-pi, pi].
-    :rtype: float, numpy.ndarray
-    """
-    ang = ang % (2 * np.pi)
-    if (isinstance(ang, int) or isinstance(ang, float)) and (ang > np.pi):
-        ang -= 2 * np.pi
-    elif isinstance(ang, np.ndarray):
-        ang[ang > np.pi] -= 2 * np.pi
-    return ang
-
-def get_polar_line(line, odom=[0.0, 0.0, 0.0]):
-    """
-    Transform a line from cartesian to polar coordinates.
-
-    Transforms a line from [x1 y1 x2 y2] from the world frame to the
-    vehicle frame using odomotrey [x y ang].
-
-    By default only transforms line to polar without translation.
-
-    :param numpy.ndarray line: line as [x1 y1 x2 y2].
-    :param list odom: the origin of the frame as [x y ang].
-    :returns: the polar line as [range theta].
-    :rtype: :py:obj:`numpy.ndarray`
-    """
-    # Line points
-    x1 = line[0]
-    y1 = line[1]
-    x2 = line[2]
-    y2 = line[3]
-
-    # Compute line (a, b, c) and range
-    line = np.array([y1-y2, x2-x1, x1*y2-x2*y1])
-    pt = np.array([odom[0], odom[1], 1])
-    dist = np.dot(pt, line) / np.linalg.norm(line[:2])
-
-    # print(np.shape(dist))
-    # Compute angle
-    if dist < 0:
-        ang = np.arctan2(line[1], line[0])
-    else:
-        ang = np.arctan2(-line[1], -line[0])
-
-    # Return in the vehicle frame
-    return np.array([np.abs(dist), angle_wrap(ang - odom[2])])
 
 
 def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
@@ -346,25 +255,38 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                         patches.append(patch)
 
         laser_patch_img = np.zeros(gray.shape)
+        numpts = 0
         for patch in patches:
             for val in patch:
                 row, col, _ = val
                 laser_patch_img[row, col] = 1.
+                numpts += 1
+        cv.imshow("laserpatchimg", laser_patch_img)
 
         laser_img_8uc1 = np.uint8(laser_patch_img * 255)
         hlp_laser_img = laser_img_8uc1.copy()
         hlp_laser_img_disp = frame.copy()
 
-        lines = cv.HoughLinesP(hlp_laser_img, 1, np.pi / 180, 50, None, 100, 50)
+        print("num pts to consider: %d" % numpts)
+        lines = cv.HoughLines(hlp_laser_img, 1, np.pi / 180, threshold=150)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
-        print("linesP %s" % lines)
+        print("\nLines: ")
         if lines is not None:
             for i in range(0, len(lines)):
-                l = lines[i]
-                cv.line(hlp_laser_img_disp, (l[0], l[1]), (l[2], l[3]), (0,0,255), 3, cv.LINE_AA)
-    
+                print("lines %s" % lines[i])
+                rho = lines[i][0]
+                theta = lines[i][1]
+                a = math.cos(theta)
+                b = math.sin(theta)
+                x0 = a * rho
+                y0 = b * rho
+                pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+                pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
+                cv.line(hlp_laser_img_disp, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
+
         cv.imshow("laser_img - 8UC1", laser_img_8uc1)
         cv.imshow("Detected Lines (in red) - Probabilistic Line Transform", hlp_laser_img_disp)
+
 
         # merge similar lines
         n = 15 # number of laser lines
@@ -373,10 +295,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         groups = [[[],[]] for _ in range(n)]
         groupavgs = np.ndarray((n,2))
         groupsmade = 0
-        polarlines = [get_polar_line(line) for line in lines]
-        # print("polarlines %s" % polarlines)
         threwout = 0
-        for polarline in polarlines:
+
+        for polarline in lines:
             # print(polarline)
             r, a = polarline
             goodgroup = -1
@@ -405,38 +326,165 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 r_avg = sum(groups[goodgroup][0]) / len(groups[goodgroup][0])
                 a_avg = sum(groups[goodgroup][1]) / len(groups[goodgroup][1])
                 groupavgs[goodgroup,:] = r_avg, a_avg
+        print("threw out %d lines" % threwout)
+        # should probably check if thetas are all withing 
+        # threshold and if lines are spaced consistently 
+        # and throw out first line and repeat if so
+
+
+        mergedlinesimg = frame.copy()
+        print("\nMerged Lines")
+        for i in range(0, len(groupavgs)):
+            try:
+                print("line %s" % groupavgs[i])
+                rho = groupavgs[i][0]
+                theta = groupavgs[i][1]
+                a = math.cos(theta)
+                b = math.sin(theta)
+                x0 = a * rho
+                y0 = b * rho
+                pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+                pt2 = (int(x0 - 1000*(-b)), int(y0 - 1000*(a)))
+                cv.line(mergedlinesimg, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
+            except:
+                print("bad line (maybe vertical) %s" % groupavgs[i])
+        cv.imshow("Merged Lines", mergedlinesimg)
+
+
+        # lines = groupavgs
+        # print(lines)
+                # for idx, line in enumerate(lines):
+                #     if line[0] > line[1] or (line[0] == line[2] and line[1] > line[3]):
+                #         lines[idx] = [line[2], line[3], line[0], line[1]]
+
+                # mergedlines = []
+                # d_thresh = 0.03 # 30
+                # m_thresh = 0.2
+                # for line in lines:
+                #     x1, y1, x2, y2 = line
+                #     m = (y2-y1) / (x2-x1)
+                #     goodgroup = -1
+                #     for idx, mline in enumerate(mergedlines): # x1, y1, x2, y2
+                #         linepts = np.append(line, mline)
+                #         # print(line, mline, linepts)
+                #         mlinelen = math.sqrt((mline[0]-mline[2])**2 + (mline[1]-mline[2])**2)
+                #         d = segments_distance(*linepts)
+                #         mm = (mline[3]-mline[1]) / (mline[2]-mline[0])
+                #         if d < d_thresh*mlinelen and abs(mm-m) < m_thresh:
+                #             goodgroup = idx
+                #             break
+                #     if goodgroup == -1:
+                #         mergedlines.append(line)
+                #     else:
+                #         mline = mergedlines[goodgroup]
+                #         linepts = np.append(line, mline)
+                #         linexs = linepts[::2]
+                #         # print("xs %s" % linexs)
+                #         xstart, xend = min(linexs), max(linexs)
+                #         for i in range(0, len(linepts)-1, 2):
+                #             if linepts[i] == xstart:
+                #                 ystart = linepts[i+1]
+                #             if linepts[i] == xend:
+                #                 yend = linepts[i+1]
+                #         mergedlines[goodgroup] = [xstart, ystart, xend, yend]
+
+                # print("%d mergedlines: %s" % (len(mergedlines), mergedlines))
+
+        # def polar_to_cartesian(line):
+        #     r, th = line
+        #     A = math.cos(th)
+        #     B = -math.sin(th)
+        #     x0 = A * r
+        #     y0 = B * r
+        #     nextscale = 1000
+        #     x1 = x0 + nextscale * B
+        #     y1 = y0 + nextscale * A
+        #     a = y1 - y0
+        #     b = x0 - x1
+        #     c = x1*y0 - x0*y1 - x0*y0
+        #     print("cart A -> a: %f -> %f" % (A, a))
+        #     print("cart B -> b: %f -> %f" % (B, b))
+        #     print("cart A/B -> a/b: %f -> %f\n" % (A/B, a/b))
+        #     return np.array([a,b,c])
 
         # print("threw out %d lines" % threwout)
-        # print("%d groups" % (len(groups)))
-        # for group in groups: print(group)
+        # # print("%d groups" % (len(groups)))
+        # # for group in groups: print(group)
         # print("newlines/avgs: ")
-        # for idx, avg in enumerate(groupavgs): print("avg %d: %s" % (idx, avg))
+        # for idx, avg in enumerate(lines): print("avg %d: %s" % (idx, avg))
 
+                # mergedlineimg = frame.copy()
+                # for line in mergedlines:
+                #     l = line
+                #     cv.line(mergedlineimg, (l[0], l[1]), (l[2], l[3]), (0,0,255), 3, cv.LINE_AA)
+                # cv.imshow('mergedline', mergedlineimg)
 
-        mergedlines_img = frame.copy()
-        for i in range(0, len(groupavgs)):
-            rho = groupavgs[i][0]
-            theta = groupavgs[i][1]
-            a = math.cos(theta)
-            b = math.sin(theta)
-            x0 = a * rho
-            y0 = b * rho
-            pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-            pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-            cv.line(mergedlines_img, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
-        mergedlines_img_disp = cv.resize(mergedlines_img, disp_size)
-        cv.imshow("mergedline", mergedlines_img_disp)
-        
+        # mergedlines_img = frame.copy()
+        # for i in range(0, len(lines)):
+        #     rho = lines[i][0]
+        #     theta = lines[i][1]
+        #     a = math.cos(theta)
+        #     b = math.sin(theta)
+        #     x0 = a * rho
+        #     y0 = b * rho
+        #     pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+        #     pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
+        #     cv.line(mergedlines_img, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
+        # mergedlines_img_disp = cv.resize(mergedlines_img, disp_size)
+        # cv.imshow("mergedline", mergedlines_img_disp)
+
+        # cartesian_lines = [polar_to_cartesian(line) for line in lines]
+        # cartlineimg = frame.copy()
+        # for line in cartesian_lines:
+        #     a, b, c = line
+        #     x1 = 0
+        #     y1 = -c/b
+        #     while x1 < frame.shape[1] and (y1 < 0 or y1 > frame.shape[0]):
+        #         x1 += 1
+        #         y1 = (a * x1 + c) / -b
+
+        #     x2 = x1 + 1
+        #     y2 = (a * x1 + c) / -b
+        #     while x2 < frame.shape[1] and (y2 > 0 and y2 < frame.shape[0]):
+        #         x2 += 1
+        #         y2 = (a * x2 + c) / -b
+            
+        #     pt1 = (x1, int(y1))
+        #     pt2 = (x2, int(y2))
+
+        #     # pt1 = (0, int(-c / b))
+        #     # pt2 = (2000, int( -(a * 2000 + c) / b ))
+        #     print("line (%f,%f,%f) => [%s, %s]" % (line[0], line[1], line[2], pt1, pt2))
+        #     cv.line(cartlineimg, pt1, pt2, (0,255,0), 3, cv.LINE_AA)
+        # # cartlineimg_disp = cv.resize(cartlineimg, disp_size)
+        # cv.imshow('cartmergedine', cartlineimg) # lines are too spread out?!?!
+
         # associate each laser patch with a line
             # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
             # for speed could just pick one point from patch, will likely be enough given circumstances
+        # patchgroups = [[] for _ in range(n)]
+        # for patch in patches:
+        #     y, x, subpixel_offset_x = patch[0]
+        #     x += subpixel_offset_x
+        #     # r = math.sqrt(x**2 + y**2)
+        #     # th = math.atan2(y, x)
+        #     bestline = 0
+        #     minval = float('inf')
+        #     for i in range(len(cartesian_lines)):
+        #         a, b, c = cartesian_lines[i]
+        #         d = abs(a*x + b*y + c) / math.sqrt(a**2 + b**2)
+        #         if d < minval:
+        #             minval = d
+        #             bestline = idx
+        #     patchgroups[bestline].append(patch)
+        # print("patch groups")
+        # for idx, group in enumerate(patchgroups): print("line %d has %d patches" % (idx, len(group)))
         
-        
-        cv.imshow("laserpatchimg", laser_patch_img)
 
         # just multiply img pts by calibration plane homography to get 3D pts
         H, mask = cv.findHomography(corners, objp)
-        print(H)
+        print("\nH:")
+        for row in H: print(row)
         pts = []
         for patch in patches:
             for pt in patch:
