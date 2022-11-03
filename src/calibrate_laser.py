@@ -267,7 +267,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         hlp_laser_img = laser_img_8uc1.copy()
         hlp_laser_img_disp = frame.copy()
 
-        print("num pts to consider: %d" % numpts)
+        print("Number of line patch member points: %d" % numpts)
         lines = cv.HoughLines(hlp_laser_img, 1, np.pi / 180, threshold=150)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
         print("\nLines: ")
@@ -322,7 +322,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 r_avg = sum(groups[goodgroup][0]) / len(groups[goodgroup][0])
                 a_avg = sum(groups[goodgroup][1]) / len(groups[goodgroup][1])
                 groupavgs[goodgroup,:] = r_avg, a_avg
-        print("threw out %d lines" % threwout)
+        print("Threw out %d lines" % threwout)
         # should probably check if thetas are all withing 
         # threshold and if lines are spaced consistently 
         # and throw out first line and repeat if so
@@ -355,34 +355,34 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             x += subpixel_offset_x
             r_p = math.sqrt(x**2 + y**2)
             th_p = math.atan2(y, x)
-            diff = r_p * math.cos(th_p)
             bestline = 0
             minval = float('inf')
             for i in range(len(mergedlines)):
                 r, th = mergedlines[i]
-                d = abs(r - diff)
+                d = abs(r - r_p * math.cos(th - th_p))
                 if d < minval:
                     minval = d
                     bestline = idx
             patchgroups[bestline].append(patch)
-        print("patch groups")
         
-        lineColors = [
-            (255,0,0),
-            (0,255,0),
-            (0,0,255),
-            (255,255,0),
-            (255,0,255),
-            (0,255,255),
-            (255,255,255),
-            (180,0,0),
-            (0,180,0),
-            (0,0,180),
-            (180,180,0),
-            (180,0,180),
-            (0,180,180),
-            (180,180,180),
-            (255,180,100),
+        print("\nPatch Groups: ")
+        
+        lineColors = [ #BGR
+            (255,0,0), # royal blue
+            (0,255,0), # green
+            (0,0,255), # brick red
+            (255,255,0), # cyan
+            (255,0,255), # magenta
+            (0,255,255), # yellow
+            (255,255,255), # white
+            (180,0,0), # dark blue
+            (0,180,0), # forest green
+            (0,0,180), # crimson
+            (180,180,0), # turquoise
+            (180,0,180), # purple
+            (0,180,180), # wheat
+            (180,180,180), # gray
+            (255,180,100), # cerulean
         ]
 
         mergedlinespatchimg = frame.copy()
