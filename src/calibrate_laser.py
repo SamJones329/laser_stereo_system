@@ -298,7 +298,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         threwout = 0
 
         for polarline in lines:
-            # print(polarline)
             r, a = polarline
             goodgroup = -1
             for idx, avg in enumerate(groupavgs):
@@ -310,17 +309,14 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 pass
                 if groupsmade == n:
                     threwout += 1
-                    # print("throwing out %s" % polarline)
                     # find best fit? throw out? not sure, will just throw out for now
                     continue
                 else:
-                    # print("(new group) appending %s to group @ %d: %s" % (polarline, groupsmade, groups[groupsmade]))
-                    groups[groupsmade][0].append(r) # = np.append(groups[groupsmade], polarline, axis=0)
+                    groups[groupsmade][0].append(r)
                     groups[groupsmade][1].append(a)
                     groupavgs[groupsmade,:] = polarline
                     groupsmade += 1
             else:
-                # print("appending %s to group @ %d: %s" % (polarline, groupsmade, groups[goodgroup]))
                 groups[goodgroup][0].append(r)
                 groups[goodgroup][1].append(a)
                 r_avg = sum(groups[goodgroup][0]) / len(groups[goodgroup][0])
@@ -349,115 +345,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             except:
                 print("bad line (maybe vertical) %s" % groupavgs[i])
         cv.imshow("Merged Lines", mergedlinesimg)
-
-
-        # lines = groupavgs
-        # print(lines)
-                # for idx, line in enumerate(lines):
-                #     if line[0] > line[1] or (line[0] == line[2] and line[1] > line[3]):
-                #         lines[idx] = [line[2], line[3], line[0], line[1]]
-
-                # mergedlines = []
-                # d_thresh = 0.03 # 30
-                # m_thresh = 0.2
-                # for line in lines:
-                #     x1, y1, x2, y2 = line
-                #     m = (y2-y1) / (x2-x1)
-                #     goodgroup = -1
-                #     for idx, mline in enumerate(mergedlines): # x1, y1, x2, y2
-                #         linepts = np.append(line, mline)
-                #         # print(line, mline, linepts)
-                #         mlinelen = math.sqrt((mline[0]-mline[2])**2 + (mline[1]-mline[2])**2)
-                #         d = segments_distance(*linepts)
-                #         mm = (mline[3]-mline[1]) / (mline[2]-mline[0])
-                #         if d < d_thresh*mlinelen and abs(mm-m) < m_thresh:
-                #             goodgroup = idx
-                #             break
-                #     if goodgroup == -1:
-                #         mergedlines.append(line)
-                #     else:
-                #         mline = mergedlines[goodgroup]
-                #         linepts = np.append(line, mline)
-                #         linexs = linepts[::2]
-                #         # print("xs %s" % linexs)
-                #         xstart, xend = min(linexs), max(linexs)
-                #         for i in range(0, len(linepts)-1, 2):
-                #             if linepts[i] == xstart:
-                #                 ystart = linepts[i+1]
-                #             if linepts[i] == xend:
-                #                 yend = linepts[i+1]
-                #         mergedlines[goodgroup] = [xstart, ystart, xend, yend]
-
-                # print("%d mergedlines: %s" % (len(mergedlines), mergedlines))
-
-        # def polar_to_cartesian(line):
-        #     r, th = line
-        #     A = math.cos(th)
-        #     B = -math.sin(th)
-        #     x0 = A * r
-        #     y0 = B * r
-        #     nextscale = 1000
-        #     x1 = x0 + nextscale * B
-        #     y1 = y0 + nextscale * A
-        #     a = y1 - y0
-        #     b = x0 - x1
-        #     c = x1*y0 - x0*y1 - x0*y0
-        #     print("cart A -> a: %f -> %f" % (A, a))
-        #     print("cart B -> b: %f -> %f" % (B, b))
-        #     print("cart A/B -> a/b: %f -> %f\n" % (A/B, a/b))
-        #     return np.array([a,b,c])
-
-        # print("threw out %d lines" % threwout)
-        # # print("%d groups" % (len(groups)))
-        # # for group in groups: print(group)
-        # print("newlines/avgs: ")
-        # for idx, avg in enumerate(lines): print("avg %d: %s" % (idx, avg))
-
-                # mergedlineimg = frame.copy()
-                # for line in mergedlines:
-                #     l = line
-                #     cv.line(mergedlineimg, (l[0], l[1]), (l[2], l[3]), (0,0,255), 3, cv.LINE_AA)
-                # cv.imshow('mergedline', mergedlineimg)
-
-        # mergedlines_img = frame.copy()
-        # for i in range(0, len(lines)):
-        #     rho = lines[i][0]
-        #     theta = lines[i][1]
-        #     a = math.cos(theta)
-        #     b = math.sin(theta)
-        #     x0 = a * rho
-        #     y0 = b * rho
-        #     pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-        #     pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-        #     cv.line(mergedlines_img, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
-        # mergedlines_img_disp = cv.resize(mergedlines_img, disp_size)
-        # cv.imshow("mergedline", mergedlines_img_disp)
-
-        # cartesian_lines = [polar_to_cartesian(line) for line in lines]
-        # cartlineimg = frame.copy()
-        # for line in cartesian_lines:
-        #     a, b, c = line
-        #     x1 = 0
-        #     y1 = -c/b
-        #     while x1 < frame.shape[1] and (y1 < 0 or y1 > frame.shape[0]):
-        #         x1 += 1
-        #         y1 = (a * x1 + c) / -b
-
-        #     x2 = x1 + 1
-        #     y2 = (a * x1 + c) / -b
-        #     while x2 < frame.shape[1] and (y2 > 0 and y2 < frame.shape[0]):
-        #         x2 += 1
-        #         y2 = (a * x2 + c) / -b
-            
-        #     pt1 = (x1, int(y1))
-        #     pt2 = (x2, int(y2))
-
-        #     # pt1 = (0, int(-c / b))
-        #     # pt2 = (2000, int( -(a * 2000 + c) / b ))
-        #     print("line (%f,%f,%f) => [%s, %s]" % (line[0], line[1], line[2], pt1, pt2))
-        #     cv.line(cartlineimg, pt1, pt2, (0,255,0), 3, cv.LINE_AA)
-        # # cartlineimg_disp = cv.resize(cartlineimg, disp_size)
-        # cv.imshow('cartmergedine', cartlineimg) # lines are too spread out?!?!
 
         # associate each laser patch with a line
             # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
@@ -492,7 +379,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
                 newpt = np.dot(H, imgpt)
                 pts.append(newpt)
-        # print(pts) figure out way to plot this        
         P.append(pts)
 
         h = Header()
