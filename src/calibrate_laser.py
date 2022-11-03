@@ -326,7 +326,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # should probably check if thetas are all withing 
         # threshold and if lines are spaced consistently 
         # and throw out first line and repeat if so
-
+        mergedlines = groupavgs
 
         mergedlinesimg = frame.copy()
         print("\nMerged Lines")
@@ -349,24 +349,50 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # associate each laser patch with a line
             # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
             # for speed could just pick one point from patch, will likely be enough given circumstances
-        # patchgroups = [[] for _ in range(n)]
-        # for patch in patches:
-        #     y, x, subpixel_offset_x = patch[0]
-        #     x += subpixel_offset_x
-        #     # r = math.sqrt(x**2 + y**2)
-        #     # th = math.atan2(y, x)
-        #     bestline = 0
-        #     minval = float('inf')
-        #     for i in range(len(cartesian_lines)):
-        #         a, b, c = cartesian_lines[i]
-        #         d = abs(a*x + b*y + c) / math.sqrt(a**2 + b**2)
-        #         if d < minval:
-        #             minval = d
-        #             bestline = idx
-        #     patchgroups[bestline].append(patch)
-        # print("patch groups")
-        # for idx, group in enumerate(patchgroups): print("line %d has %d patches" % (idx, len(group)))
+        patchgroups = [[] for _ in range(n)]
+        for patch in patches:
+            y, x, subpixel_offset_x = patch[0]
+            x += subpixel_offset_x
+            r_p = math.sqrt(x**2 + y**2)
+            th_p = math.atan2(y, x)
+            diff = r_p * math.cos(th_p)
+            bestline = 0
+            minval = float('inf')
+            for i in range(len(mergedlines)):
+                r, th = mergedlines[i]
+                d = abs(r - diff)
+                if d < minval:
+                    minval = d
+                    bestline = idx
+            patchgroups[bestline].append(patch)
+        print("patch groups")
         
+        lineColors = [
+            (255,0,0),
+            (0,255,0),
+            (0,0,255),
+            (255,255,0),
+            (255,0,255),
+            (0,255,255),
+            (255,255,255),
+            (180,0,0),
+            (0,180,0),
+            (0,0,180),
+            (180,180,0),
+            (180,0,180),
+            (0,180,180),
+            (180,180,180),
+            (255,180,100),
+        ]
+
+        mergedlinespatchimg = frame.copy()
+        for idx, group in enumerate(patchgroups): 
+            print("line %d has %d patches" % (idx, len(group)))
+            for patch in group:
+                for pt in patch:
+                    row, col, _ = pt
+                    mergedlinespatchimg[row, col] = lineColors[idx]
+        cv.imshow("Grouped Patches", mergedlinespatchimg)
 
         # just multiply img pts by calibration plane homography to get 3D pts
         H, mask = cv.findHomography(corners, objp)
