@@ -37,6 +37,5 @@ Here are some images from the current progress.
 ### Grouped Patches (clearer)
 ![groupedpatchesbig2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571603-1218fb86-bf1f-41b9-afa2-889512a19514.png)
 
-### Plane fitting
+### Plane fitting [(source)](http://srv.uib.es/wp-content/uploads/2019/12/MassotCampos_PhD_v1.2.2_printer.pdf)
 ![Screenshot from 2022-11-17 16-18-18](https://user-images.githubusercontent.com/55857337/202572178-d41fa7e0-ad43-414c-8f86-a8abeecdd4c1.png)
-[source](http://srv.uib.es/wp-content/uploads/2019/12/MassotCampos_PhD_v1.2.2_printer.pdf)
