@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   shape_msgs
   std_msgs
   cv_bridge
+  jsk_recognition_msgs
 )
 
 find_package(OpenCV REQUIRED)

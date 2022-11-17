@@ -12,8 +12,15 @@ import numpy as np
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs import point_cloud2
 from std_msgs.msg import Header
+from geometry_msgs.msg import PolygonStamped, Point32
+from visualization_msgs.msg import Marker, MarkerArray
+import random
+import tf.transformations
+from jsk_recognition_msgs.msg import PolygonArray
 
 from helpers import *
+
+DEBUG_LINES = False
 
 class Cam:
     '''Left Camera Params'''
@@ -107,9 +114,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     '''
 
     ptpub = rospy.Publisher('chessboard_pts', PointCloud2, queue_size=10)
+    planepub = rospy.Publisher('laser_planes', PolygonArray, queue_size=10)
+    planenormpub = rospy.Publisher('laser_plane_normals', MarkerArray, queue_size=10)
 
     s = chessboard_interior_dimensions
-    P = [] # 3D pts
+    n = 15 # number of laser lines
+    P = [[] for _ in range(n)] # 3D pts
     for frame in data:
 
         # scale down display images to have 500 px height and preserve aspect ratio
@@ -289,7 +299,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
 
         # merge similar lines
-        n = 15 # number of laser lines
         r_thresh = 25
         # a_thresh = math.pi / 8
         groups = [[[],[]] for _ in range(n)]
@@ -333,6 +342,14 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 th = angle_wrap(th + math.pi)
                 r *= -1
             mergedlines[idx,:] = r, th
+        # sort by radius increasing 
+        # this allows us to assume lines pts at 
+        # corresponding indices in the 3D points
+        # array point to the same line, as the lines
+        # should always be oriented the same 
+        # relative to increasing radius due to the 
+        # camera and laser being relatively fixed (and ideally rigid)
+        mergedlines = mergedlines[mergedlines[:, 0].argsort()] 
 
         mergedlinesimg = frame.copy()
         print("\nMerged Lines")
@@ -373,7 +390,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         
         print("\nPatch Groups: ")
         
-        lineColors = [ #BGR
+        linecolors = [ #BGR
             (255,0,0), # royal blue
             (0,255,0), # green
             (0,0,255), # brick red
@@ -391,27 +408,35 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             (255,180,100), # cerulean
         ]
 
-        mergedlinespatchimg = frame.copy()
-        for idx, group in enumerate(patchgroups): 
-            print("line %d has %d patches" % (idx, len(group)))
-            for patch in group:
-                for pt in patch:
-                    row, col, _ = pt
-                    mergedlinespatchimg[row, col] = lineColors[idx]
-        cv.imshow("Grouped Patches", mergedlinespatchimg)
-
         # just multiply img pts by calibration plane homography to get 3D pts
         H, mask = cv.findHomography(corners, objp)
         print("\nH:")
         for row in H: print(row)
+
+        mergedlinespatchimg = frame.copy()
+        mergedlinespatchimgclear = frame.copy()
+        for idx, group in enumerate(patchgroups): 
+            print("line %d has %d patches" % (idx, len(group)))
+            for patch in group:
+                for pt in patch:
+                    row, col, x_offset = pt
+                    pt3d = H.dot([col + x_offset, row, 1])
+                    mergedlinespatchimg[row, col] = linecolors[idx]
+                    cv.circle(mergedlinespatchimgclear, (col, row), 2, linecolors[idx])
+                    P[idx].append(pt3d)
+        cv.imshow("Grouped Patches", mergedlinespatchimg)
+        cv.imshow("Grouped Patches (Enlarged Pts)", mergedlinespatchimgclear)
+
+        ###### This is just for rviz ######
         pts = []
         for patch in patches:
             for pt in patch:
                 # x, y
-                imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
+                # imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
+                imgpt = [pt[1] + pt[2], pt[0], 1]
                 newpt = np.dot(H, imgpt)
                 pts.append(newpt)
-        P.append(pts)
+        pts = np.array(pts)
 
         h = Header()
         h.frame_id = "/world"
@@ -419,29 +444,139 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
         ptpub.publish(pc2msg)
 
-
-        k = cv.waitKey(0) & 0xFF
-        if k == ord('s'):
-            t = str(dt.now())
-            cv.imwrite('pose' + t + '.png', img)
-            cv.imwrite('laserreward' + t + '.png', I_L)
-            cv.imwrite('laserlinepts' + t + '.png', potential_lines)
-            cv.imwrite('lasersubpxpts' + t + '.png', laser_img * 255)
-            cv.imwrite('laserpatches' + t + '.png', laser_patch_img * 255)
-        cv.destroyAllWindows()
+        if DEBUG_LINES:
+            k = cv.waitKey(0) & 0xFF
+            if k == ord('s'):
+                t = str(dt.now())
+                cv.imwrite('pose' + t + '.png', img)
+                cv.imwrite('laserreward' + t + '.png', I_L)
+                cv.imwrite('laserlinepts' + t + '.png', potential_lines)
+                cv.imwrite('lasersubpxpts' + t + '.png', laser_img * 255)
+                cv.imwrite('laserpatches' + t + '.png', laser_patch_img * 255)
+            cv.destroyAllWindows()
 
 
     # RANSAC: form M subjects of k points from P
-    subsets = []
-    for subset in subsets:
-        # compute centroid c_j of p_j
+    planes = []
+    for lineP in P:
+        potplanes = []
 
-        # subtrct centroid c_j to all points P
-        # use SVD to find the plane normal n_j
-        # define pi_j,L : (n_j, c_j)
-        # computer distance su d_j of all points P to the plane pi_j,L
-        pass
-    # return plane that fits most points/minimizes distance d_j
+        M = 3
+        npLineP = np.array(lineP) # type: np.ndarray
+
+        # print("npLineP shape")
+        # print(npLineP.shape)
+
+        shuffled = npLineP.copy()
+        np.random.shuffle(shuffled)
+        subsets = np.array_split(shuffled, M)
+        # print("subshape")
+        # print(len(subsets))
+        # for arr in subsets: print(arr.shape)
+
+        for subset in subsets:
+
+            # compute centroid c_j of p_j
+            c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
+
+            # subtract centroid c_j to all points P
+            planeRefPts = np.array(lineP)
+            planeRefPts[:,0] -= c[0]
+            planeRefPts[:,1] -= c[1]
+            planeRefPts[:,2] -= c[2]
+            # print("planerefshape")
+            # print(planeRefPts.shape) # (..., 3, 1)
+            # planeRefPts = np.array(lineP) - c
+
+            # use SVD to find the plane normal n_j
+            # i think this is third third column vector (b/c 3D space -> 3x3 V mat) of V
+            w, u, vt = cv.SVDecomp(planeRefPts)
+            n = vt[2,:] # type: np.ndarray
+            # print(n.shape) # (3,)
+            # define pi_j,L : (n_j, c_j)
+
+            # compute distance su d_j of all points P to the plane pi_j,L
+            # this distance is the dot product of the vector from the centroid to the point with the normal vector
+            distsum = planeRefPts.dot(n).sum()
+            potplanes.append((c, vt, distsum))
+
+        bestplane = potplanes[0]
+        for plane in potplanes:
+            if plane[2] < bestplane[2]:
+                bestplane = plane
+        planes.append(plane[:2]) # we don't need the distance anymore
+        # return plane that fits most points/minimizes distance d_j
+
+    # make planes polygons for rviz
+    planemsgs = PolygonArray()
+    planenormmsgs = MarkerArray()
+    for idx, plane in enumerate(planes):
+        t = rospy.Time.now()
+        fid = "/world"
+        planepolygon = PolygonStamped()
+        planepolygon.header.frame_id = fid
+        planepolygon.header.stamp = t
+
+        norm = Marker()
+        norm.header.frame_id = fid
+        norm.header.stamp = t
+
+        c = plane[0]
+        vecs = plane[1]
+        n = vecs[2]
+
+        p1 = Point32()
+        p1.x = vecs[0,0] + vecs[1,0]
+        p1.y = vecs[0,1] + vecs[1,1]
+        p1.z = vecs[0,2] + vecs[1,2]
+        planepolygon.polygon.points.append(p1)
+
+        p2 = Point32()
+        p2.x = vecs[0,0] - vecs[1,0]
+        p2.y = vecs[0,1] - vecs[1,1]
+        p2.z = vecs[0,2] - vecs[1,2]
+        planepolygon.polygon.points.append(p2)
+        
+        p3 = Point32()
+        p3.x = -vecs[0,0] - vecs[1,0]
+        p3.y = -vecs[0,1] - vecs[1,1]
+        p3.z = -vecs[0,2] - vecs[1,2]
+        planepolygon.polygon.points.append(p3)
+        
+        p4 = Point32()
+        p4.x = -vecs[0,0] + vecs[1,0]
+        p4.y = -vecs[0,1] + vecs[1,1]
+        p4.z = -vecs[0,2] + vecs[1,2]
+        planepolygon.polygon.points.append(p4)
+        
+        norm.type = Marker.ARROW
+        norm.color.b = 0.0
+        norm.color.g = 1.0
+        norm.color.r = 0.0
+        norm.color.a = 0.8
+        norm.scale.x = 0.1
+        norm.scale.y = 0.005
+        norm.scale.z = 0.005
+        norm.id = idx
+        norm.pose.position.x = c[0]
+        norm.pose.position.y = c[1]
+        norm.pose.position.z = c[2]
+        roll = 0
+        pitch = 2*math.pi - math.atan2(n[2], n[0])
+        yaw = math.atan2(n[1], n[0])
+        nq = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
+        norm.pose.orientation.x = nq[0]
+        norm.pose.orientation.y = nq[1]
+        norm.pose.orientation.z = nq[2]
+        norm.pose.orientation.w = nq[3]
+
+        planemsgs.polygons.append(planepolygon)
+        planenormmsgs.markers.append(norm)
+
+    planepub.publish(planemsgs)
+    planenormpub.publish(planenormmsgs)
+        # could maybe just use information better to extract a homography for the plane instead of the plane normal and stuff
+
 
 if __name__ == "__main__":
     rospy.init_node('calibrate_laser')
