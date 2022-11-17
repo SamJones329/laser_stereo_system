@@ -26,13 +26,14 @@ Here are some images from the current progress.
 ![image with laser pixels grouped in minimum size patches](https://user-images.githubusercontent.com/55857337/202570976-59595cfa-fffc-4415-a0a8-2b54e5c6c7d0.png)
 
 ### Detected Lines
-![detectedlines2022-11-17 16:07:24 017902](https://user-images.githubusercontent.com/55857337/202571093-aba2235c-7d83-438c-b663-c0fd3c1dc8a6.png)
+![detectedlines2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571534-753a1f78-2a56-4ccb-a101-a28925296ea5.png)
 
 ### Merged Lines
-![mergedlines2022-11-17 16:07:24 017902](https://user-images.githubusercontent.com/55857337/202571129-de154f95-9341-4b04-bdc1-7e4f0d635d39.png)
+![mergedlines2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571557-ef2118d8-c00d-4fb4-9761-91800cabc0b3.png)
 
 ### Grouped Patches
-![groupedpatches2022-11-17 16:07:24 017902](https://user-images.githubusercontent.com/55857337/202571166-2027324d-29e1-420f-9e68-a835c37f9612.png)
+![groupedpatches2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571577-db02b1cd-79d7-4d0f-b989-f43b7f4f378d.png)
 
 ### Grouped Patches (clearer)
-![groupedpatchesbig2022-11-17 16:07:24 017902](https://user-images.githubusercontent.com/55857337/202571199-9586f23b-940a-4bdc-8b73-c3743a4a0e87.png)
+![groupedpatchesbig2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571603-1218fb86-bf1f-41b9-afa2-889512a19514.png)
+
