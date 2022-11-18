@@ -20,7 +20,7 @@ from jsk_recognition_msgs.msg import PolygonArray
 
 from helpers import *
 
-DEBUG_LINES = False
+DEBUG_LINES = True
 
 class Cam:
     '''Left Camera Params'''
@@ -120,8 +120,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     s = chessboard_interior_dimensions
     n = 15 # number of laser lines
     P = [[] for _ in range(n)] # 3D pts
-    for frame in data:
-
+    for idx, frame in enumerate(data):
+        print("processing frame %d with size" % (idx+1))
+        print(frame.shape)
         # scale down display images to have 500 px height and preserve aspect ratio
         disp_size = ( int( frame.shape[1] * (500./frame.shape[0]) ), 500 )
 
@@ -151,6 +152,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         ret, corners = cv.findChessboardCorners(gray, s)
 
         if not ret:
+            print("couldn't find chessboard, discarding...")
             continue
         corners2 = cv.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
 
@@ -162,8 +164,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
         img = frame.copy()
         img = draw(img, corners2, imgpts)
-        imgdisp = cv.resize(img, disp_size)
-        cv.imshow('img', imgdisp)
 
         # ==== Find laser line homography ====
         # in our case for calibration we assume the laser line we see is the 
@@ -182,14 +182,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
         # I_L = f(k_r,k_g,k_b) = k_r*I_R + k_g*I_G + k_b*I_B, ||(k_r,k_g,k_b)|| <= 1
         I_L = k_r * frame[:,:,0] + k_g * frame[:,:,1] + k_b * frame[:,:,2]
-        I_L_img = cv.resize(I_L, disp_size)
-        I_L_img /= 255.0
-        cv.imshow('reward', I_L_img)
+        I_L_img = I_L.copy()
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
         # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
-        winlen = 5
         rows = frame.shape[0]
         cols = frame.shape[1]
+        winlen = max(3, cols * 5 // 1920) # framecols * 5px / 1080p, but we don't want window size <3px
         gvals = []
         for col in range(cols):
             maxwin = 0
@@ -211,8 +209,50 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             x = int(val[0])
             y = int(val[1])
             cv.circle(potential_lines, (x,y), 3, (0,0,255))
-        potential_lines = cv.resize(potential_lines, disp_size)
-        cv.imshow("pot lines", potential_lines)
+        
+        # calculate centroid of these pixels and filter based on that
+        # taking an average is probably not the best strategy for selecting a center, but idk
+        # maybe we could actually remove the chessboard from the image to prevent the white paper messing up the color reward
+        # c = (np.average(gvals[:,0]), np.average(gvals[:,1])) # c_x, c_y
+        # stdev = (np.std(gvals[:,0]), np.std(gvals[:,1])) # stdev_x stdev_y
+        # stdevx2 = stdev[0] * 2
+        # stdevy2 = stdev[1] * 2
+        # minx = c[0] - stdevx2
+        # maxx = c[0] + stdevx2
+        # miny = c[1] - stdevy2
+        # maxy = c[1] + stdevy2
+        # newgvals = []
+        # potential_lines_filtered = frame.copy()
+        # for idx, val in enumerate(gvals):
+        #     x = int(val[0])
+        #     y = int(val[1])
+        #     if minx < x < maxx and miny < y < maxy:
+        #         newgvals.append(val)
+        #         cv.circle(potential_lines_filtered, (x, y), 3, (0,0,255))
+        # gvals = np.array(newgvals)
+        criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 10, 1.0)
+        flags = cv.KMEANS_PP_CENTERS
+        pot_pts = np.float32(gvals[:,:2])
+        compactness, labels, centers = cv.kmeans(pot_pts, 2, None, criteria, 10, flags)
+        blarg = np.array(labels==0)
+        print("blarg")
+        print(blarg.shape)
+        print(blarg)
+        A = pot_pts[labels.ravel()==0]
+        B = pot_pts[labels.ravel()==1]
+        clustering_img = frame.copy()
+        print(centers)
+        for center in centers:
+            cv.circle(clustering_img, (int(center[1]), int(center[0])), 5, (0,255,0), cv.FILLED)
+        for idx, val in enumerate(A):
+            x, y = val
+            x, y = int(x), int(y)
+            cv.circle(clustering_img, (x, y), 2, (0,0,255), cv.FILLED)
+        for idx, val in enumerate(B):
+            x, y = val
+            x, y = int(x), int(y)
+            cv.circle(clustering_img, (x, y), 2, (255,0,0), cv.FILLED)
+
 
         # figure out how to throw out outliers
         # maybe generate histogram and use to throw out some points
@@ -249,8 +289,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
 
         
-        # laser_disp_img = cv.resize(laser_img, disp_size)
-        cv.imshow("laserimg", laser_img)
 
         patches = []
         # find patches
@@ -271,7 +309,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 row, col, _ = val
                 laser_patch_img[row, col] = 1.
                 numpts += 1
-        cv.imshow("laserpatchimg", laser_patch_img)
 
         laser_img_8uc1 = np.uint8(laser_patch_img * 255)
         hlp_laser_img = laser_img_8uc1.copy()
@@ -294,8 +331,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
                 cv.line(hlp_laser_img_disp, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
 
-        cv.imshow("laser_img - 8UC1", laser_img_8uc1)
-        cv.imshow("Detected Lines (in red) - Probabilistic Line Transform", hlp_laser_img_disp)
 
 
         # merge similar lines
@@ -367,7 +402,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 cv.line(mergedlinesimg, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
             except:
                 print("bad line (maybe vertical) %s" % groupavgs[i])
-        cv.imshow("Merged Lines", mergedlinesimg)
 
         # associate each laser patch with a line
             # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
@@ -424,8 +458,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     mergedlinespatchimg[row, col] = linecolors[idx]
                     cv.circle(mergedlinespatchimgclear, (col, row), 2, linecolors[idx])
                     P[idx].append(pt3d)
-        cv.imshow("Grouped Patches", mergedlinespatchimg)
-        cv.imshow("Grouped Patches (Enlarged Pts)", mergedlinespatchimgclear)
 
         ###### This is just for rviz ######
         pts = []
@@ -445,6 +477,43 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         ptpub.publish(pc2msg)
 
         if DEBUG_LINES:
+            imgdisp = cv.resize(img, disp_size)
+            cv.imshow('img', imgdisp)
+
+            I_L_img = cv.resize(I_L, disp_size)
+            I_L_img /= 255.0
+            cv.imshow('reward', I_L_img)
+
+            potential_lines = cv.resize(potential_lines, disp_size)
+            cv.imshow("pot lines", potential_lines)
+
+            clustering_img_disp = cv.resize(clustering_img, disp_size)
+            cv.imshow("clustered pot pts", clustering_img_disp)
+
+            # potential_lines_filtered_disp = cv.resize(potential_lines_filtered, disp_size)
+            # cv.imshow("pot lines (filtered)", potential_lines_filtered_disp)
+
+            laser_disp_img = cv.resize(laser_img, disp_size)
+            cv.imshow("laserimg", laser_disp_img)
+
+            laser_patch_img_disp = cv.resize(laser_patch_img, disp_size)
+            cv.imshow("laserpatchimg", laser_patch_img_disp)
+
+            hlp_laser_img_disp = cv.resize(laser_patch_img, disp_size)
+            cv.imshow("Detected Lines (in red) - Probabilistic Line Transform", hlp_laser_img_disp)
+
+            laser_img_8uc1_disp = cv.resize(laser_img_8uc1, disp_size)
+            cv.imshow("laser_img - 8UC1", laser_img_8uc1_disp)
+
+            mergedlinesimg_disp = cv.resize(mergedlinesimg, disp_size)
+            cv.imshow("Merged Lines", mergedlinesimg_disp)
+
+            mergedlinespatchimg_disp = cv.resize(mergedlinespatchimg, disp_size)
+            cv.imshow("Grouped Patches", mergedlinespatchimg_disp)
+
+            mergedlinespatchimgclear_disp = cv.resize(mergedlinespatchimgclear, disp_size)
+            cv.imshow("Grouped Patches (Enlarged Pts)", mergedlinespatchimgclear_disp)
+
             k = cv.waitKey(0) & 0xFF
             if k == ord('s'):
                 t = str(dt.now())
@@ -453,8 +522,31 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 cv.imwrite('laserlinepts' + t + '.png', potential_lines)
                 cv.imwrite('lasersubpxpts' + t + '.png', laser_img * 255)
                 cv.imwrite('laserpatches' + t + '.png', laser_patch_img * 255)
+                cv.imwrite('detectedlines' + t + '.png', hlp_laser_img_disp)
+                cv.imwrite('mergedlines' + t + '.png', mergedlinesimg)
+                cv.imwrite('groupedpatches' + t + '.png', mergedlinespatchimg)
+                cv.imwrite('groupedpatchesbig' + t + '.png', mergedlinespatchimgclear)
             cv.destroyAllWindows()
 
+
+
+    # publish all 3D points together
+    ###### This is just for rviz ######
+    pts = []
+    for lineP in P:
+        for pt in lineP:
+            # x, y
+            # imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
+            imgpt = [pt[1], pt[0], 1]
+            newpt = np.dot(H, imgpt)
+            pts.append(newpt)
+    pts = np.array(pts)
+    
+    h = Header()
+    h.frame_id = "/world"
+    h.stamp = rospy.Time.now()
+    pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
+    ptpub.publish(pc2msg)
 
     # RANSAC: form M subjects of k points from P
     planes = []
@@ -473,9 +565,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # print("subshape")
         # print(len(subsets))
         # for arr in subsets: print(arr.shape)
-
+        print(len(subsets))
+        for idx, subset in enumerate(subsets): 
+            print("subset %d" % idx)
+            print(subset.shape)
         for subset in subsets:
-
+            print(subset.shape)
             # compute centroid c_j of p_j
             c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
 
@@ -526,27 +621,27 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         n = vecs[2]
 
         p1 = Point32()
-        p1.x = vecs[0,0] + vecs[1,0]
-        p1.y = vecs[0,1] + vecs[1,1]
-        p1.z = vecs[0,2] + vecs[1,2]
+        p1.x = c[0] + vecs[0,0] + vecs[1,0]
+        p1.y = c[1] + vecs[0,1] + vecs[1,1]
+        p1.z = c[2] + vecs[0,2] + vecs[1,2]
         planepolygon.polygon.points.append(p1)
 
         p2 = Point32()
-        p2.x = vecs[0,0] - vecs[1,0]
-        p2.y = vecs[0,1] - vecs[1,1]
-        p2.z = vecs[0,2] - vecs[1,2]
+        p2.x = c[0] + vecs[0,0] - vecs[1,0]
+        p2.y = c[1] + vecs[0,1] - vecs[1,1]
+        p2.z = c[2] + vecs[0,2] - vecs[1,2]
         planepolygon.polygon.points.append(p2)
         
         p3 = Point32()
-        p3.x = -vecs[0,0] - vecs[1,0]
-        p3.y = -vecs[0,1] - vecs[1,1]
-        p3.z = -vecs[0,2] - vecs[1,2]
+        p3.x = c[0] -vecs[0,0] - vecs[1,0]
+        p3.y = c[1] -vecs[0,1] - vecs[1,1]
+        p3.z = c[2] -vecs[0,2] - vecs[1,2]
         planepolygon.polygon.points.append(p3)
         
         p4 = Point32()
-        p4.x = -vecs[0,0] + vecs[1,0]
-        p4.y = -vecs[0,1] + vecs[1,1]
-        p4.z = -vecs[0,2] + vecs[1,2]
+        p4.x = c[0] -vecs[0,0] + vecs[1,0]
+        p4.y = c[1] -vecs[0,1] + vecs[1,1]
+        p4.z = c[2] -vecs[0,2] + vecs[1,2]
         planepolygon.polygon.points.append(p4)
         
         norm.type = Marker.ARROW
@@ -613,3 +708,9 @@ if __name__ == "__main__":
 
 # run command
 # rosrun laser_stereo_system calibrate_laser.py -s 9x6 -q 0.02884 -f /home/active_stereo/catkin_ws/src/laser_stereo_system/calib_imgs
+# 1 good, 2 bad, 3 meh, 4 meh, 5 bad, 6 meh, 7 meh, 8 meh, 9 meh, 10 meh
+# lines are being well detected (except some extra outliers in one image) but are not grouped well
+# maybe need to take less extra points
+# also maybe need larger integral window because of higher resolution
+# i think i may be extracting the 3d coords of the points wrong? maybe i just need more distance variation?
+# also might be taking the wrong vector as the plane normal vector? not sure

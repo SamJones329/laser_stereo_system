@@ -1,7 +1,7 @@
 <launch>
 
-    <arg name="size" default="9x6" />
-    <arg name="square" default="0.02884" />
+    <arg name="size" default="8x6" />
+    <arg name="square" default="0.0224" />
     <arg name="folder" default="$(find laser_stereo_system)/calib_imgs" />
 
     <!-- RViz -->
