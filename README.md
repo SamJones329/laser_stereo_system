@@ -11,16 +11,31 @@ Work needs to be done still to extract feature descriptions of the laser lines t
 Here are some images from the current progress.
 
 ### Chessboard Pose Extraction
-![chessboard axes](https://user-images.githubusercontent.com/55857337/195712009-8466d603-fd94-467d-88a2-4359af153c01.png)
+![Chessboard Axes](https://user-images.githubusercontent.com/55857337/202570815-65b65e35-d150-4a9f-b2eb-be9641a1fff8.png)
 
 ### Laser Color Reward Image
-![image that is brighter the closer the color is to the laser's color](https://user-images.githubusercontent.com/55857337/195712270-e16e98c5-410c-42f5-8688-a1411621eeaf.png)
+![image that is brighter the closer the color is to the laser's color](https://user-images.githubusercontent.com/55857337/202570885-d3198248-4ade-499e-b87d-61a8d5be409f.png)
 
 ### Potential Laser Pixels (Windows)
 ![image with circles drawn on potential laser pixels](https://user-images.githubusercontent.com/55857337/195712355-c1b27558-fcdb-41d2-9682-da058abe5582.png)
 
 ### Laser Subpixels
-![image with pixels having a laser point in them white and everything else black](https://user-images.githubusercontent.com/55857337/195714877-d5315974-5103-4909-8a8e-3078c927a8d9.png)
+![image with pixels having a laser point in them white and everything else black](https://user-images.githubusercontent.com/55857337/202570931-caa357b4-30ac-4299-95b4-209fd29c1191.png)
 
 ### Laser Patches
-![image with laser pixels grouped in minimum size patches](https://user-images.githubusercontent.com/55857337/195714826-8089c74b-2bdf-4534-b5c7-59cc35b1e0ec.png)
+![image with laser pixels grouped in minimum size patches](https://user-images.githubusercontent.com/55857337/202570976-59595cfa-fffc-4415-a0a8-2b54e5c6c7d0.png)
+
+### Detected Lines
+![detectedlines2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571534-753a1f78-2a56-4ccb-a101-a28925296ea5.png)
+
+### Merged Lines
+![mergedlines2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571557-ef2118d8-c00d-4fb4-9761-91800cabc0b3.png)
+
+### Grouped Patches
+![groupedpatches2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571577-db02b1cd-79d7-4d0f-b989-f43b7f4f378d.png)
+
+### Grouped Patches (clearer)
+![groupedpatchesbig2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571603-1218fb86-bf1f-41b9-afa2-889512a19514.png)
+
+### Plane fitting [(source)](http://srv.uib.es/wp-content/uploads/2019/12/MassotCampos_PhD_v1.2.2_printer.pdf)
+![Screenshot from 2022-11-17 16-18-18](https://user-images.githubusercontent.com/55857337/202572178-d41fa7e0-ad43-414c-8f86-a8abeecdd4c1.png)
