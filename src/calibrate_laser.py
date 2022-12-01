@@ -22,6 +22,24 @@ from helpers import *
 
 DEBUG_LINES = True
 
+DISP_COLORS = [ #BGR
+    (255,0,0), # royal blue
+    (0,255,0), # green
+    (0,0,255), # brick red
+    (255,255,0), # cyan
+    (255,0,255), # magenta
+    (0,255,255), # yellow
+    (255,255,255), # white
+    (180,0,0), # dark blue
+    (0,180,0), # forest green
+    (0,0,180), # crimson
+    (180,180,0), # turquoise
+    (180,0,180), # purple
+    (0,180,180), # wheat
+    (180,180,180), # gray
+    (255,180,100), # cerulean
+]
+
 class Cam:
     '''Left Camera Params'''
 
@@ -200,7 +218,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         
         gvals.sort(key=lambda x: x[2])
         num_lines = 15
-        expectedgoodgvals = int(rows * num_lines * 1.4) # room for plenty of outliers
+        expectedgoodgvals = int(rows * num_lines * 1.6)#1.4) # room for plenty of outliers
         gvals = gvals[:expectedgoodgvals]
         gvals = np.array(gvals)
              
@@ -209,50 +227,74 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             x = int(val[0])
             y = int(val[1])
             cv.circle(potential_lines, (x,y), 3, (0,0,255))
-        
-        # calculate centroid of these pixels and filter based on that
-        # taking an average is probably not the best strategy for selecting a center, but idk
-        # maybe we could actually remove the chessboard from the image to prevent the white paper messing up the color reward
-        # c = (np.average(gvals[:,0]), np.average(gvals[:,1])) # c_x, c_y
-        # stdev = (np.std(gvals[:,0]), np.std(gvals[:,1])) # stdev_x stdev_y
-        # stdevx2 = stdev[0] * 2
-        # stdevy2 = stdev[1] * 2
-        # minx = c[0] - stdevx2
-        # maxx = c[0] + stdevx2
-        # miny = c[1] - stdevy2
-        # maxy = c[1] + stdevy2
-        # newgvals = []
-        # potential_lines_filtered = frame.copy()
-        # for idx, val in enumerate(gvals):
-        #     x = int(val[0])
-        #     y = int(val[1])
-        #     if minx < x < maxx and miny < y < maxy:
-        #         newgvals.append(val)
-        #         cv.circle(potential_lines_filtered, (x, y), 3, (0,0,255))
-        # gvals = np.array(newgvals)
+
+
+        # K-means clustering on img to segment good points from bad points
         criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 10, 1.0)
         flags = cv.KMEANS_PP_CENTERS
         pot_pts = np.float32(gvals[:,:2])
-        compactness, labels, centers = cv.kmeans(pot_pts, 2, None, criteria, 10, flags)
-        blarg = np.array(labels==0)
-        print("blarg")
-        print(blarg.shape)
-        print(blarg)
+        # 3 clusters, no given labels, 10 attempts
+        compactness, labels, centers = cv.kmeans(pot_pts, 3, None, criteria, 10, flags)
         A = pot_pts[labels.ravel()==0]
         B = pot_pts[labels.ravel()==1]
+        C = pot_pts[labels.ravel()==2]
         clustering_img = frame.copy()
+        print("cluster centers")
         print(centers)
         for center in centers:
-            cv.circle(clustering_img, (int(center[1]), int(center[0])), 5, (0,255,0), cv.FILLED)
-        for idx, val in enumerate(A):
-            x, y = val
-            x, y = int(x), int(y)
-            cv.circle(clustering_img, (x, y), 2, (0,0,255), cv.FILLED)
-        for idx, val in enumerate(B):
-            x, y = val
-            x, y = int(x), int(y)
-            cv.circle(clustering_img, (x, y), 2, (255,0,0), cv.FILLED)
+            x, y = int(center[1]), int(center[0])
+            print("x, y: %d, %d" % (x,y))
+            cv.circle(clustering_img, (x,y), 5, (0,255,0), cv.FILLED)
 
+        # decide whether clusters are part of laser lights or not
+        # cluster into 3 sections
+        # find mean of all sections together
+        # find mean of each individual section
+        # find cluster closest to center of image
+        # throw out clusters if they are too far away
+        # NOTE: this mean we use distance from mean value of cluster to 
+        # center of image as a heuristic to judge it this will only be 
+        # relevant if the laser is relatively nearly coaxial with the 
+        # camera (similar angle, small translation)
+        clusters = [A,B,C]
+        goodclusters = []
+        img_center = (frame.shape[1]//2, frame.shape[0]//2)
+        quarter_x = frame.shape[1]//4
+        third_y = frame.shape[0]//3
+        minx = img_center[0] - quarter_x
+        miny = img_center[1] - third_y
+        maxx = img_center[0] + quarter_x
+        maxy = img_center[1] + third_y
+        print("ROI(minX,maxX,minY,maxY) = (%d, %d, %d, %d)" % (minx, maxx, miny, maxy))
+        for idx, cluster in enumerate(clusters):
+            for clusterptidx, val in enumerate(cluster):
+                x, y = val
+                x, y = int(x), int(y)
+                cv.circle(clustering_img, (x, y), 2, DISP_COLORS[idx], cv.FILLED)
+            center = centers[idx]
+            if minx < center[0] < maxx and miny < center[1] < maxy:
+                goodclusters.append(cluster)
+                print("keeping cluster %d w/ center %f, %f" % (idx, center[0], center[1]))
+        
+        goodclustering_img = frame.copy()
+        for idx, cluster in enumerate(goodclusters):
+            for clusterptidx, val in enumerate(cluster):
+                x, y = val
+                x, y = int(x), int(y)
+                cv.circle(goodclustering_img, (x, y), 2, DISP_COLORS[idx], cv.FILLED)
+        cv.rectangle(goodclustering_img, (minx, miny), (maxx, maxy), (255, 0, 0), 3)
+
+        numgoodclusters = len(goodclusters)
+        if numgoodclusters == 0:
+            print("no good clusters, discarding img")
+            continue
+        
+        oldnumgvals = gvals.shape[0]
+        gvals = goodclusters[0]
+        for i in range(1, numgoodclusters):
+            gvals = np.append(gvals, goodclusters[i], axis=0)
+        
+        print("\nnum gvals went from %d to %d\n" % (oldnumgvals, gvals.shape[0]))
 
         # figure out how to throw out outliers
         # maybe generate histogram and use to throw out some points
@@ -263,6 +305,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # laser_subpixels = {}
         laser_subpixels = np.full(gray.shape, 0.0, dtype=np.float)
         laser_img = np.full(gray.shape, 0.0, dtype=np.float)
+        badoffsets = 0
         for window in gvals:
             # center of window
             x, y = int(window[0]), int(window[1])
@@ -281,13 +324,13 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             else:
                 numer = math.log(fxm) - math.log(fxp)
                 subpixel_offset = 0.5 * numer / denom
-            if subpixel_offset > winlen//2 \
-                    or x + subpixel_offset < 0 \
-                    or x + subpixel_offset > laser_img.shape[1]: 
+            if abs(subpixel_offset) > winlen//2:
+                badoffsets += 1
+            if x + subpixel_offset < 0 or x + subpixel_offset > laser_img.shape[1]: 
                 continue
             laser_img[y,int(x+subpixel_offset)] = 1.0
             laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
-
+        print("%d bad offsets" % badoffsets)
         
 
         patches = []
@@ -310,15 +353,17 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 laser_patch_img[row, col] = 1.
                 numpts += 1
 
-        laser_img_8uc1 = np.uint8(laser_patch_img * 255)
-        hlp_laser_img = laser_img_8uc1.copy()
+        laser_img_8uc1 = np.uint8(laser_img * 255)
+        laser_patch_img_8uc1 = np.uint8(laser_patch_img * 255)
+        hlp_laser_img = laser_patch_img_8uc1.copy()
         hlp_laser_img_disp = frame.copy()
 
         print("Number of line patch member points: %d" % numpts)
-        lines = cv.HoughLines(hlp_laser_img, 1, np.pi / 180, threshold=150)
+        lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, numpts//80) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
         print("\nLines: ")
         if lines is not None:
+            lines = lines[lines[:, 0].argsort()] 
             for i in range(0, len(lines)):
                 print("lines %s" % lines[i])
                 rho = lines[i][0]
@@ -367,7 +412,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 a_avg = sum(groups[goodgroup][1]) / len(groups[goodgroup][1])
                 groupavgs[goodgroup,:] = r_avg, a_avg
         print("Threw out %d lines" % threwout)
-        # should probably check if thetas are all withing 
+        # should probably check if thetas are all withing TODO
         # threshold and if lines are spaced consistently 
         # and throw out first line and repeat if so
         mergedlines = groupavgs
@@ -399,7 +444,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 y0 = b * rho
                 pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
                 pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-                cv.line(mergedlinesimg, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
+                cv.line(mergedlinesimg, pt1, pt2, DISP_COLORS[i], 3, cv.LINE_AA)
             except:
                 print("bad line (maybe vertical) %s" % groupavgs[i])
 
@@ -423,24 +468,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             patchgroups[bestline].append(patch)
         
         print("\nPatch Groups: ")
-        
-        linecolors = [ #BGR
-            (255,0,0), # royal blue
-            (0,255,0), # green
-            (0,0,255), # brick red
-            (255,255,0), # cyan
-            (255,0,255), # magenta
-            (0,255,255), # yellow
-            (255,255,255), # white
-            (180,0,0), # dark blue
-            (0,180,0), # forest green
-            (0,0,180), # crimson
-            (180,180,0), # turquoise
-            (180,0,180), # purple
-            (0,180,180), # wheat
-            (180,180,180), # gray
-            (255,180,100), # cerulean
-        ]
 
         # just multiply img pts by calibration plane homography to get 3D pts
         H, mask = cv.findHomography(corners, objp)
@@ -455,8 +482,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 for pt in patch:
                     row, col, x_offset = pt
                     pt3d = H.dot([col + x_offset, row, 1])
-                    mergedlinespatchimg[row, col] = linecolors[idx]
-                    cv.circle(mergedlinespatchimgclear, (col, row), 2, linecolors[idx])
+                    mergedlinespatchimg[row, col] = DISP_COLORS[idx]
+                    cv.circle(mergedlinespatchimgclear, (col, row), 2, DISP_COLORS[idx])
                     P[idx].append(pt3d)
 
         ###### This is just for rviz ######
@@ -490,6 +517,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             clustering_img_disp = cv.resize(clustering_img, disp_size)
             cv.imshow("clustered pot pts", clustering_img_disp)
 
+            good_clustering_img_disp = cv.resize(goodclustering_img, disp_size)
+            cv.imshow("filtered clustered pot pts", good_clustering_img_disp)
+
             # potential_lines_filtered_disp = cv.resize(potential_lines_filtered, disp_size)
             # cv.imshow("pot lines (filtered)", potential_lines_filtered_disp)
 
@@ -499,11 +529,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             laser_patch_img_disp = cv.resize(laser_patch_img, disp_size)
             cv.imshow("laserpatchimg", laser_patch_img_disp)
 
-            hlp_laser_img_disp = cv.resize(laser_patch_img, disp_size)
-            cv.imshow("Detected Lines (in red) - Probabilistic Line Transform", hlp_laser_img_disp)
+            hlp_laser_img_disp = cv.resize(hlp_laser_img_disp, disp_size)
+            cv.imshow("Detected Lines (in red) - Hough Lines", hlp_laser_img_disp)
 
-            laser_img_8uc1_disp = cv.resize(laser_img_8uc1, disp_size)
-            cv.imshow("laser_img - 8UC1", laser_img_8uc1_disp)
+            laser_patch_img_8uc1_disp = cv.resize(laser_patch_img_8uc1, disp_size)
+            cv.imshow("laser_img - 8UC1", laser_patch_img_8uc1_disp)
 
             mergedlinesimg_disp = cv.resize(mergedlinesimg, disp_size)
             cv.imshow("Merged Lines", mergedlinesimg_disp)
