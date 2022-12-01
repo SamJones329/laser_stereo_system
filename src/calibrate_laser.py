@@ -359,7 +359,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         hlp_laser_img_disp = frame.copy()
 
         print("Number of line patch member points: %d" % numpts)
-        lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, numpts//80) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
+        # lines = np.empty((15,1,3))
+        # lines = np.empty((100,1,2))
+        lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
+        # lines = np.array(lines)
+        print(lines.shape)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
         print("\nLines: ")
         if lines is not None:
@@ -415,6 +419,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # should probably check if thetas are all withing TODO
         # threshold and if lines are spaced consistently 
         # and throw out first line and repeat if so
+        # it seems that hough lines outputs lines in descending 
+        # order of votes, so perhaps throwing out the last line 
+        # in the list may be a good solution. WARNING though, because 
+        # this feature is undocumented and not guarenteed across all implementations
         mergedlines = groupavgs
         for idx, line in enumerate(mergedlines):
             r, th = line
@@ -556,6 +564,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 cv.imwrite('mergedlines' + t + '.png', mergedlinesimg)
                 cv.imwrite('groupedpatches' + t + '.png', mergedlinespatchimg)
                 cv.imwrite('groupedpatchesbig' + t + '.png', mergedlinespatchimgclear)
+            elif k == ord('x'):
+                return
             cv.destroyAllWindows()
 
 
