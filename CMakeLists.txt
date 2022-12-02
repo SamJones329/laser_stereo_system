@@ -10,13 +10,19 @@ project(laser_stereo_system)
 find_package(catkin REQUIRED COMPONENTS
   geometry_msgs
   roscpp
+  roscpp_serialization
   rospy
   sensor_msgs
   shape_msgs
   std_msgs
   cv_bridge
   jsk_recognition_msgs
+  message_generation
 )
+
+## Both Boost.python and Python libs are required.
+find_package(Boost REQUIRED COMPONENTS python)
+find_package(PythonLibs 2.7 REQUIRED)
 
 find_package(OpenCV REQUIRED)
 
@@ -27,7 +33,7 @@ find_package(OpenCV REQUIRED)
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
-# catkin_python_setup()
+catkin_python_setup()
 
 ################################################
 ## Declare ROS messages, services and actions ##
@@ -54,11 +60,11 @@ find_package(OpenCV REQUIRED)
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  Vec3f.msg
+  HoughLinesResult.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -75,10 +81,13 @@ find_package(OpenCV REQUIRED)
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   geometry_msgs#   sensor_msgs#   shape_msgs#   std_msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  # geometry_msgs
+  # sensor_msgs
+  # shape_msgs
+  std_msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -110,10 +119,10 @@ find_package(OpenCV REQUIRED)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-#  INCLUDE_DIRS include
-#  LIBRARIES laser_stereo_system
-#  CATKIN_DEPENDS geometry_msgs roscpp rospy sensor_msgs shape_msgs std_msgs
-#  DEPENDS system_lib
+ INCLUDE_DIRS include
+ LIBRARIES _cv_fixes_wrapper_cpp#laser_stereo_system
+ CATKIN_DEPENDS message_runtime geometry_msgs roscpp rospy sensor_msgs shape_msgs std_msgs
+#  DEPENDS OpenCV # system_lib
 )
 
 ###########
@@ -123,15 +132,18 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+  include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${Boost_INCLUDE_DIRS}
+  ${PYTHON_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
 #   src/${PROJECT_NAME}/laser_stereo_system.cpp
 # )
+add_library(_cv_fixes_wrapper_cpp src/cv_fixes_wrapper.cpp)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -148,6 +160,10 @@ include_directories(
 ## target back to the shorter version for ease of user use
 ## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
 # set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
+set_target_properties(_cv_fixes_wrapper_cpp PROPERTIES
+  PREFIX ""
+  LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}
+)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -158,6 +174,7 @@ include_directories(
 #  ${catkin_LIBRARIES}
 #  ${OpenCV_LIBS}
 #)
+target_link_libraries(_cv_fixes_wrapper_cpp ${OpenCV_LIBS} ${catkin_LIBRARIES} ${Boost_LIBRARIES})
 
 #############
 ## Install ##

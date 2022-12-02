@@ -17,6 +17,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 import random
 import tf.transformations
 from jsk_recognition_msgs.msg import PolygonArray
+from laser_stereo_system import CvFixes
+cvf = CvFixes()
 
 from helpers import *
 
@@ -361,8 +363,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         print("Number of line patch member points: %d" % numpts)
         # lines = np.empty((15,1,3))
         # lines = np.empty((100,1,2))
-        lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
+        # lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
         # lines = np.array(lines)
+        lines = cvf.HoughLinesFix(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)
         print(lines.shape)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
         print("\nLines: ")
