@@ -16,7 +16,7 @@ find_package(catkin REQUIRED COMPONENTS
   shape_msgs
   std_msgs
   cv_bridge
-  jsk_recognition_msgs
+  jsk_recognition_msgs # sudo apt-get install ros-melodic-jsk-recognition-msgs & sudo apt-get install ros-melodic-jsk-rviz-plugins
   message_generation
 )
 
@@ -62,8 +62,8 @@ catkin_python_setup()
 ## Generate messages in the 'msg' folder
 add_message_files(
   FILES
-  Vec3f.msg
-  HoughLinesResult.msg
+  ###Vec3f.msg
+  ###HoughLinesResult.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -120,7 +120,7 @@ generate_messages(
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
  INCLUDE_DIRS include
- LIBRARIES _cv_fixes_wrapper_cpp#laser_stereo_system
+ ###LIBRARIES _cv_fixes_wrapper_cpp#laser_stereo_system
  CATKIN_DEPENDS message_runtime geometry_msgs roscpp rospy sensor_msgs shape_msgs std_msgs
 #  DEPENDS OpenCV # system_lib
 )
@@ -143,7 +143,7 @@ include_directories(
 # add_library(${PROJECT_NAME}
 #   src/${PROJECT_NAME}/laser_stereo_system.cpp
 # )
-add_library(_cv_fixes_wrapper_cpp src/cv_fixes_wrapper.cpp)
+###add_library(_cv_fixes_wrapper_cpp src/cv_fixes_wrapper.cpp)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -160,10 +160,10 @@ add_library(_cv_fixes_wrapper_cpp src/cv_fixes_wrapper.cpp)
 ## target back to the shorter version for ease of user use
 ## e.g. "rosrun someones_pkg node" instead of "rosrun someones_pkg someones_pkg_node"
 # set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
-set_target_properties(_cv_fixes_wrapper_cpp PROPERTIES
-  PREFIX ""
-  LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}
-)
+###set_target_properties(_cv_fixes_wrapper_cpp PROPERTIES
+###  PREFIX ""
+###  LIBRARY_OUTPUT_DIRECTORY ${CATKIN_DEVEL_PREFIX}/${CATKIN_PACKAGE_PYTHON_DESTINATION}
+###)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
@@ -174,7 +174,7 @@ set_target_properties(_cv_fixes_wrapper_cpp PROPERTIES
 #  ${catkin_LIBRARIES}
 #  ${OpenCV_LIBS}
 #)
-target_link_libraries(_cv_fixes_wrapper_cpp ${OpenCV_LIBS} ${catkin_LIBRARIES} ${Boost_LIBRARIES})
+###target_link_libraries(_cv_fixes_wrapper_cpp ${OpenCV_LIBS} ${catkin_LIBRARIES} ${Boost_LIBRARIES})
 
 #############
 ## Install ##

@@ -8,7 +8,6 @@ import os
 from optparse import OptionParser
 import math
 from datetime import datetime as dt
-import numpy as np
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs import point_cloud2
 from std_msgs.msg import Header
@@ -17,8 +16,8 @@ from visualization_msgs.msg import Marker, MarkerArray
 import random
 import tf.transformations
 from jsk_recognition_msgs.msg import PolygonArray
-from laser_stereo_system import CvFixes
-cvf = CvFixes()
+###from laser_stereo_system import CvFixes
+###cvf = CvFixes()
 
 from helpers import *
 
@@ -364,8 +363,9 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # lines = np.empty((15,1,3))
         # lines = np.empty((100,1,2))
         # lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
+        lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80, srn=2, stn=2)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
         # lines = np.array(lines)
-        lines = cvf.HoughLinesFix(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)
+        # lines = cvf.HoughLinesFix(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)
         print(lines.shape)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
         print("\nLines: ")
@@ -386,12 +386,21 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
 
         # merge similar lines
-        r_thresh = 25
-        # a_thresh = math.pi / 8
+        r_thresh = 20
+        a_thresh = 3#math.pi / 8
         groups = [[[],[]] for _ in range(n)]
         groupavgs = np.ndarray((n,2))
         groupsmade = 0
         threwout = 0
+
+        # throw out bad angles
+        avg_angle = np.average(lines[:,1])
+        newlines = []
+        for polarline in lines:
+            r, angle = polarline
+            if abs(angle - avg_angle) < a_thresh:
+                newlines.append(polarline)
+        lines = np.array(newlines)
 
         for polarline in lines:
             r, a = polarline
@@ -433,6 +442,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 th = angle_wrap(th + math.pi)
                 r *= -1
             mergedlines[idx,:] = r, th
+
         # sort by radius increasing 
         # this allows us to assume lines pts at 
         # corresponding indices in the 3D points
