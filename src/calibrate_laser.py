@@ -389,16 +389,17 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         r_thresh = 20
         a_thresh = 3#math.pi / 8
         groups = [[[],[]] for _ in range(n)]
-        groupavgs = np.ndarray((n,2))
+        groupavgs = np.zeros((n,2))
         groupsmade = 0
         threwout = 0
 
         # throw out bad angles
-        avg_angle = np.average(lines[:,1])
+        # avg_angle = np.average(lines[:,1])
+        med_angle = np.median(lines[:,1])
         newlines = []
         for polarline in lines:
             r, angle = polarline
-            if abs(angle - avg_angle) < a_thresh:
+            if abs(angle - med_angle) < a_thresh:
                 newlines.append(polarline)
         lines = np.array(newlines)
 
@@ -411,7 +412,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                     goodgroup = idx
                     break
             if goodgroup == -1:
-                pass
                 if groupsmade == n:
                     threwout += 1
                     # find best fit? throw out? not sure, will just throw out for now
@@ -472,6 +472,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # associate each laser patch with a line
             # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
             # for speed could just pick one point from patch, will likely be enough given circumstances
+            # we throw out patches too far from any lines
+        maxdistfromline = 50 # px
         patchgroups = [[] for _ in range(n)]
         for patch in patches:
             y, x, subpixel_offset_x = patch[0] # get point in patch
@@ -486,7 +488,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 if d < minval: # if found shorter distance
                     minval = d
                     bestline = idx
-            patchgroups[bestline].append(patch)
+            if minval < maxdistfromline:
+                patchgroups[bestline].append(patch)
         
         print("\nPatch Groups: ")
 
