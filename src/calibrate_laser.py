@@ -23,6 +23,7 @@ from helpers import *
 
 DEBUG_LINES = False
 USE_PREV_DATA = True
+# https://stackoverflow.com/questions/53591350/plane-fit-of-3d-points-with-singular-value-decomposition
 
 DISP_COLORS = [ #BGR
     (255,0,0), # royal blue
