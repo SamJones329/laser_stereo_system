@@ -1,5 +1,6 @@
 import numpy as np
 import cv2 as cv
+import math
 
 # modifies in place and returns
 def calc_chessboard_corners(board_size, square_size):
@@ -126,7 +127,6 @@ def segments_intersect(x11, y11, x12, y12, x21, y21, x22, y22):
   t = (dx2 * (y11 - y21) + dy2 * (x21 - x11)) / (-delta)
   return (0 <= s <= 1) and (0 <= t <= 1)
 
-import math
 def point_segment_distance(px, py, x1, y1, x2, y2):
   dx = x2 - x1
   dy = y2 - y1

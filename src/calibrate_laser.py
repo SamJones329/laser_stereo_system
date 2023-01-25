@@ -21,7 +21,8 @@ from jsk_recognition_msgs.msg import PolygonArray
 
 from helpers import *
 
-DEBUG_LINES = True
+DEBUG_LINES = False
+USE_PREV_DATA = True
 
 DISP_COLORS = [ #BGR
     (255,0,0), # royal blue
@@ -140,6 +141,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     n = 15 # number of laser lines
     P = [[] for _ in range(n)] # 3D pts
     for idx, frame in enumerate(data):
+        if USE_PREV_DATA: break
         print("processing frame %d with size" % (idx+1))
         print(frame.shape)
         # scale down display images to have 500 px height and preserve aspect ratio
@@ -527,6 +529,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
         ptpub.publish(pc2msg)
 
+        np.save("calibpts", np.array(P))
+
         if DEBUG_LINES:
             imgdisp = cv.resize(img, disp_size)
             cv.imshow('img', imgdisp)
@@ -584,7 +588,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 return
             cv.destroyAllWindows()
 
-
+    if USE_PREV_DATA:
+        try:
+            P = np.load("calibpts.npy")
+        except:
+            print("error retrieving previous data, exiting...")
+            return
 
     # publish all 3D points together
     ###### This is just for rviz ######
@@ -628,28 +637,44 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         for subset in subsets:
             print(subset.shape)
             # compute centroid c_j of p_j
-            c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
+            # c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
+           
+            #1.calculate centroid of points and make points relative to it
+            centroid         = subset.mean(axis = 0)
+            # xyzT             = np.transpose(xyz)
+            subsetR             = subset - centroid                         #points relative to centroid
+            # xyzRT            = np.transpose(xyzR)                       
+
+            #2. calculate the singular value decomposition of the xyzT matrix and get the normal as the last column of u matrix
+            u, sigma, v = np.linalg.svd(subsetR.T)
+            print("svd shapes u, sigma, v")
+            print(u.shape)
+            print(sigma.shape)
+            print(v.shape)
+            normal = u[2]
+            normal = normal / np.linalg.norm(normal)       #we want normal vectors normalized to unity
 
             # subtract centroid c_j to all points P
             planeRefPts = np.array(lineP)
-            planeRefPts[:,0] -= c[0]
-            planeRefPts[:,1] -= c[1]
-            planeRefPts[:,2] -= c[2]
+            planeRefPts[:,0] -= centroid[0]
+            planeRefPts[:,1] -= centroid[1]
+            planeRefPts[:,2] -= centroid[2]
             # print("planerefshape")
             # print(planeRefPts.shape) # (..., 3, 1)
             # planeRefPts = np.array(lineP) - c
 
             # use SVD to find the plane normal n_j
             # i think this is third third column vector (b/c 3D space -> 3x3 V mat) of V
-            w, u, vt = cv.SVDecomp(planeRefPts)
-            n = vt[2,:] # type: np.ndarray
+            # w, u, vt = cv.SVDecomp(planeRefPts)
+            # n = vt[2,:] # type: np.ndarray
             # print(n.shape) # (3,)
             # define pi_j,L : (n_j, c_j)
 
+
             # compute distance su d_j of all points P to the plane pi_j,L
             # this distance is the dot product of the vector from the centroid to the point with the normal vector
-            distsum = planeRefPts.dot(n).sum()
-            potplanes.append((c, vt, distsum))
+            distsum = planeRefPts.dot(normal).sum()
+            potplanes.append((centroid, v, distsum))
 
         bestplane = potplanes[0]
         for plane in potplanes:
