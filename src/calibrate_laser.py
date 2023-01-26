@@ -22,7 +22,7 @@ from jsk_recognition_msgs.msg import PolygonArray
 from helpers import *
 
 DEBUG_LINES = False
-USE_PREV_DATA = True
+USE_PREV_DATA = False
 # https://stackoverflow.com/questions/53591350/plane-fit-of-3d-points-with-singular-value-decomposition
 
 DISP_COLORS = [ #BGR
@@ -530,7 +530,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
         ptpub.publish(pc2msg)
 
-        np.save("calibpts", np.array(P))
+        np.save("calibpts", np.array(P)) # saves points in ~/.ros
+        np.save("cbhomog", H) # saves chessboard homography in ~/.ros
 
         if DEBUG_LINES:
             imgdisp = cv.resize(img, disp_size)
@@ -591,7 +592,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
     if USE_PREV_DATA:
         try:
-            P = np.load("calibpts.npy")
+            P = np.load("calibpts.npy", allow_pickle=True) # reads from ~/.ros
+            H = np.load("cbhomog.npy", allow_pickle=True)
         except:
             print("error retrieving previous data, exiting...")
             return
@@ -637,6 +639,17 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             print(subset.shape)
         for subset in subsets:
             print(subset.shape)
+
+            # plane fitting
+            # nx3 input
+            # get centroid
+            # get all pts relative to centroid
+            # input centroid-relative array into numpy svd fn
+            # use v[2] as normal vector of fitted plane
+            # Note, that using the second, i.e. last element relies on the fact that numpy (LAPACK) returns the singular values in descending order.
+            # normalize normal vector by dividing it by norm
+            # 
+
             # compute centroid c_j of p_j
             # c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
            
@@ -647,12 +660,12 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             # xyzRT            = np.transpose(xyzR)                       
 
             #2. calculate the singular value decomposition of the xyzT matrix and get the normal as the last column of u matrix
-            u, sigma, v = np.linalg.svd(subsetR.T)
+            u, sigma, v = np.linalg.svd(subsetR)
             print("svd shapes u, sigma, v")
             print(u.shape)
             print(sigma.shape)
             print(v.shape)
-            normal = u[2]
+            normal = v[2]
             normal = normal / np.linalg.norm(normal)       #we want normal vectors normalized to unity
 
             # subtract centroid c_j to all points P
