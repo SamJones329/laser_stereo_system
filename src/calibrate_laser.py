@@ -22,7 +22,7 @@ from jsk_recognition_msgs.msg import PolygonArray
 from helpers import *
 
 DEBUG_LINES = False
-USE_PREV_DATA = False
+USE_PREV_DATA = True
 # https://stackoverflow.com/questions/53591350/plane-fit-of-3d-points-with-singular-value-decomposition
 
 DISP_COLORS = [ #BGR
@@ -654,13 +654,13 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             # c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
            
             #1.calculate centroid of points and make points relative to it
-            centroid         = subset.mean(axis = 0)
+            centroid = subset.mean(axis = 0)
             # xyzT             = np.transpose(xyz)
-            subsetR             = subset - centroid                         #points relative to centroid
+            subsetRelative = subset - centroid                         #points relative to centroid
             # xyzRT            = np.transpose(xyzR)                       
 
             #2. calculate the singular value decomposition of the xyzT matrix and get the normal as the last column of u matrix
-            u, sigma, v = np.linalg.svd(subsetR)
+            u, sigma, v = np.linalg.svd(subsetRelative)
             print("svd shapes u, sigma, v")
             print(u.shape)
             print(sigma.shape)
@@ -669,10 +669,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             normal = normal / np.linalg.norm(normal)       #we want normal vectors normalized to unity
 
             # subtract centroid c_j to all points P
-            planeRefPts = np.array(lineP)
-            planeRefPts[:,0] -= centroid[0]
-            planeRefPts[:,1] -= centroid[1]
-            planeRefPts[:,2] -= centroid[2]
+            # planeRefPts = np.array(lineP)
+            # planeRefPts[:,0] -= centroid[0]
+            # planeRefPts[:,1] -= centroid[1]
+            # planeRefPts[:,2] -= centroid[2]
             # print("planerefshape")
             # print(planeRefPts.shape) # (..., 3, 1)
             # planeRefPts = np.array(lineP) - c
@@ -687,8 +687,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
             # compute distance su d_j of all points P to the plane pi_j,L
             # this distance is the dot product of the vector from the centroid to the point with the normal vector
-            distsum = planeRefPts.dot(normal).sum()
-            potplanes.append((centroid, v, distsum))
+            distsum = subsetRelative.dot(normal).sum()
+            potplanes.append((centroid, normal, distsum))
 
         bestplane = potplanes[0]
         for plane in potplanes:
@@ -707,61 +707,34 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         planepolygon.header.frame_id = fid
         planepolygon.header.stamp = t
 
-        norm = Marker()
-        norm.header.frame_id = fid
-        norm.header.stamp = t
+        normalMarker = Marker()
+        normalMarker.header.frame_id = fid
+        normalMarker.header.stamp = t
 
-        c = plane[0]
-        vecs = plane[1]
-        n = vecs[2]
+        centroid, normal = plane
 
-        p1 = Point32()
-        p1.x = c[0] + vecs[0,0] + vecs[1,0]
-        p1.y = c[1] + vecs[0,1] + vecs[1,1]
-        p1.z = c[2] + vecs[0,2] + vecs[1,2]
-        planepolygon.polygon.points.append(p1)
+        normalMarker.type = Marker.ARROW
+        normalMarker.color.b = 0.0
+        normalMarker.color.g = 1.0
+        normalMarker.color.r = 0.0
+        normalMarker.color.a = 0.8
+        normalMarker.scale.x = 0.1
+        normalMarker.scale.y = 0.005
+        normalMarker.scale.z = 0.005
+        normalMarker.id = idx
+        normalMarker.pose.position.x = centroid[0]
+        normalMarker.pose.position.y = centroid[1]
+        normalMarker.pose.position.z = centroid[2]
+        refvec = np.array([1,0,0])
+        a = np.cross(refvec, normal)
+        normalMarker.pose.orientation.x = a[0]
+        normalMarker.pose.orientation.y = a[1]
+        normalMarker.pose.orientation.z = a[2]
+        # sqrt((v1.length ^ 2) * (v2.length ^ 2)) + dotproduct(v1, v2)
+        # refvec and normal are both normalized so magnitude is 1
+        normalMarker.pose.orientation.w = 1 + refvec.dot(normal) 
 
-        p2 = Point32()
-        p2.x = c[0] + vecs[0,0] - vecs[1,0]
-        p2.y = c[1] + vecs[0,1] - vecs[1,1]
-        p2.z = c[2] + vecs[0,2] - vecs[1,2]
-        planepolygon.polygon.points.append(p2)
-        
-        p3 = Point32()
-        p3.x = c[0] -vecs[0,0] - vecs[1,0]
-        p3.y = c[1] -vecs[0,1] - vecs[1,1]
-        p3.z = c[2] -vecs[0,2] - vecs[1,2]
-        planepolygon.polygon.points.append(p3)
-        
-        p4 = Point32()
-        p4.x = c[0] -vecs[0,0] + vecs[1,0]
-        p4.y = c[1] -vecs[0,1] + vecs[1,1]
-        p4.z = c[2] -vecs[0,2] + vecs[1,2]
-        planepolygon.polygon.points.append(p4)
-        
-        norm.type = Marker.ARROW
-        norm.color.b = 0.0
-        norm.color.g = 1.0
-        norm.color.r = 0.0
-        norm.color.a = 0.8
-        norm.scale.x = 0.1
-        norm.scale.y = 0.005
-        norm.scale.z = 0.005
-        norm.id = idx
-        norm.pose.position.x = c[0]
-        norm.pose.position.y = c[1]
-        norm.pose.position.z = c[2]
-        roll = 0
-        pitch = 2*math.pi - math.atan2(n[2], n[0])
-        yaw = math.atan2(n[1], n[0])
-        nq = tf.transformations.quaternion_from_euler(roll, pitch, yaw)
-        norm.pose.orientation.x = nq[0]
-        norm.pose.orientation.y = nq[1]
-        norm.pose.orientation.z = nq[2]
-        norm.pose.orientation.w = nq[3]
-
-        planemsgs.polygons.append(planepolygon)
-        planenormmsgs.markers.append(norm)
+        planenormmsgs.markers.append(normalMarker)
 
     planepub.publish(planemsgs)
     planenormpub.publish(planenormmsgs)
