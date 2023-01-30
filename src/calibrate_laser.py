@@ -668,27 +668,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             normal = v[2]
             normal = normal / np.linalg.norm(normal)       #we want normal vectors normalized to unity
 
-            # subtract centroid c_j to all points P
-            # planeRefPts = np.array(lineP)
-            # planeRefPts[:,0] -= centroid[0]
-            # planeRefPts[:,1] -= centroid[1]
-            # planeRefPts[:,2] -= centroid[2]
-            # print("planerefshape")
-            # print(planeRefPts.shape) # (..., 3, 1)
-            # planeRefPts = np.array(lineP) - c
-
-            # use SVD to find the plane normal n_j
-            # i think this is third third column vector (b/c 3D space -> 3x3 V mat) of V
-            # w, u, vt = cv.SVDecomp(planeRefPts)
-            # n = vt[2,:] # type: np.ndarray
-            # print(n.shape) # (3,)
-            # define pi_j,L : (n_j, c_j)
-
-
             # compute distance su d_j of all points P to the plane pi_j,L
             # this distance is the dot product of the vector from the centroid to the point with the normal vector
             distsum = subsetRelative.dot(normal).sum()
-            potplanes.append((centroid, v, distsum))
+            potplanes.append((centroid, normal, distsum))
 
         bestplane = potplanes[0]
         for plane in potplanes:
@@ -713,8 +696,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         normalMarker.header.frame_id = fid
         normalMarker.header.stamp = t
 
-        centroid, vecs = plane
-        normal = vecs[2]
+        centroid, normal = plane
 
         normalMarker.type = Marker.ARROW
         normalMarker.color.b = 0.0
@@ -790,10 +772,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # could maybe just use information better to extract a homography for the plane instead of the plane normal and stuff
 
     # save planes in file in <a,b,c,A,B,C> format where centroid is (a,b,c) and normal is (A,B,C)
+    planes = np.array(planes)
     planes = np.reshape(planes, (planes.shape[0], 6))
     print("Planes (centroid, normal)=<X,Y,Z,U,V,W>")
     print(planes)
-    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()))
+    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes)
 
 if __name__ == "__main__":
     rospy.init_node('calibrate_laser')
