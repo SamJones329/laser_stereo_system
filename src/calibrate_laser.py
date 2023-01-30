@@ -655,7 +655,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
            
             #1.calculate centroid of points and make points relative to it
             centroid = subset.mean(axis = 0)
-            # xyzT             = np.transpose(xyz)
+            subsetT = subset.T
             subsetRelative = subset - centroid                         #points relative to centroid
             # xyzRT            = np.transpose(xyzR)                       
 
@@ -688,7 +688,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             # compute distance su d_j of all points P to the plane pi_j,L
             # this distance is the dot product of the vector from the centroid to the point with the normal vector
             distsum = subsetRelative.dot(normal).sum()
-            potplanes.append((centroid, normal, distsum))
+            potplanes.append((centroid, v, distsum))
 
         bestplane = potplanes[0]
         for plane in potplanes:
@@ -699,6 +699,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
     # make planes polygons for rviz
     planemsgs = PolygonArray()
+    planemsgs.header.frame_id = "/world"
+    planemsgs.header.stamp = rospy.Time.now()
     planenormmsgs = MarkerArray()
     for idx, plane in enumerate(planes):
         t = rospy.Time.now()
@@ -711,7 +713,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         normalMarker.header.frame_id = fid
         normalMarker.header.stamp = t
 
-        centroid, normal = plane
+        centroid, vecs = plane
+        normal = vecs[2]
 
         normalMarker.type = Marker.ARROW
         normalMarker.color.b = 0.0
@@ -735,6 +738,52 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         normalMarker.pose.orientation.w = 1 + refvec.dot(normal) 
 
         planenormmsgs.markers.append(normalMarker)
+
+        # have to append points in right order to get surface
+        # centroid = Q = (a,b,c)
+        # normal = n = <A,B,C>
+        # A(x-a) + B(y-b) + C(z-c) = 0
+        # normal[0] * (x - centroid[0]) + normal[1] * (y - centroid[1]) + normal[2] * (z - centroid[2])
+        # D = Aa + Bb + Cc
+        A, B, C = normal
+        D = np.dot(normal, centroid)
+
+        # Ax - Aa + By - Bb - Cc = 0
+        # Ax + By = Aa + Bb + Cc
+        # y = (D - Ax) / B
+        p1 = Point32()
+        p1.x = centroid[0] + 0.5
+        p1.z = centroid[2] - 0.5
+        p1.y = (D - A*p1.x - C*p1.z) / B
+
+        p2 = Point32()
+        p2.x = centroid[0] - 0.5
+        p2.z = centroid[2] - 0.5
+        p2.y = (D - A*p2.x - C*p2.z) / B
+        
+        # y = (D - Ax - Cz) / B
+        p3 = Point32()
+        p3.x = centroid[0] + 0.5
+        p3.z = centroid[2] + 0.5
+        p3.y = (D - A*p3.x - C*p3.z) / B
+        
+        p4 = Point32()
+        p4.x = centroid[0] - 0.5
+        p4.z = centroid[2] + 0.5
+        p4.y = (D - A*p4.x - C*p4.z) / B
+        
+        planepolygon.polygon.points.append(p1)
+        planepolygon.polygon.points.append(p2)
+        planepolygon.polygon.points.append(p4)
+        planepolygon.polygon.points.append(p3)
+
+        print("\nadding polygon")
+        print("P1: (%f,%f,%f)" % (p1.x, p1.y, p1.z))
+        print("P2: (%f,%f,%f)" % (p2.x, p2.y, p2.z))
+        print("P3: (%f,%f,%f)" % (p3.x, p3.y, p3.z))
+        print("P4: (%f,%f,%f)" % (p4.x, p4.y, p4.z))
+        planemsgs.likelihood.append(1)
+        planemsgs.polygons.append(planepolygon)
 
     planepub.publish(planemsgs)
     planenormpub.publish(planenormmsgs)

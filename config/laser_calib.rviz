@@ -88,12 +88,12 @@ Visualization Manager:
       Marker Topic: /laser_plane_normals
       Name: MarkerArray
       Namespaces:
-        {}
+        "": true
       Queue Size: 100
       Value: true
-    - Alpha: 1
+    - Alpha: 0.75
       Class: jsk_rviz_plugin/PolygonArray
-      Color: 25; 255; 0
+      Color: 25; 255; 255
       Enabled: true
       Name: PolygonArray
       Topic: /laser_planes
@@ -102,7 +102,7 @@ Visualization Manager:
       coloring: Auto
       enable lighting: true
       normal length: 0.10000000149011612
-      only border: true
+      only border: false
       show normal: true
   Enabled: true
   Global Options:
@@ -132,25 +132,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 0.8079323768615723
+      Distance: 3.942243814468384
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0.3506770730018616
-        Y: 0.3793565630912781
-        Z: 1.4369983673095703
+        X: 0.6392021179199219
+        Y: 0.3161652088165283
+        Z: 0.9761630892753601
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: -0.10960117727518082
+      Pitch: 0.08539918810129166
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 3.025402069091797
+      Yaw: 3.030416965484619
     Saved: ~
 Window Geometry:
   Displays:
