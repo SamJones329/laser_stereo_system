@@ -789,6 +789,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     planenormpub.publish(planenormmsgs)
         # could maybe just use information better to extract a homography for the plane instead of the plane normal and stuff
 
+    # save planes in file in <a,b,c,A,B,C> format where centroid is (a,b,c) and normal is (A,B,C)
+    planes = np.reshape(planes, (planes.shape[0], 6))
+    print("Planes (centroid, normal)=<X,Y,Z,U,V,W>")
+    print(planes)
+    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()))
 
 if __name__ == "__main__":
     rospy.init_node('calibrate_laser')
