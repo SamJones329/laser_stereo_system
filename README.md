@@ -37,11 +37,10 @@ Here are some images from the current progress.
 ### Grouped Patches (clearer)
 ![groupedpatchesbig2022-11-17 16:14:35 657407](https://user-images.githubusercontent.com/55857337/202571603-1218fb86-bf1f-41b9-afa2-889512a19514.png)
 
-### Plane Extraction
-![Screenshot from 2023-02-06 13-35-09](https://user-images.githubusercontent.com/55857337/217612632-7916ff6b-9325-4143-bc96-0054db7cc7ed.png)
-
-![Screenshot from 2023-02-06 13-35-24](https://user-images.githubusercontent.com/55857337/217612667-1a152402-a907-49a5-999e-eb964ef60e53.png)
-
-
 ### Plane fitting [(source)](http://srv.uib.es/wp-content/uploads/2019/12/MassotCampos_PhD_v1.2.2_printer.pdf)
+Algorithm
 ![Screenshot from 2022-11-17 16-18-18](https://user-images.githubusercontent.com/55857337/202572178-d41fa7e0-ad43-414c-8f86-a8abeecdd4c1.png)
+
+Results
+![Screenshot from 2023-02-06 13-35-09](https://user-images.githubusercontent.com/55857337/217612632-7916ff6b-9325-4143-bc96-0054db7cc7ed.png)
+![Screenshot from 2023-02-06 13-35-24](https://user-images.githubusercontent.com/55857337/217612667-1a152402-a907-49a5-999e-eb964ef60e53.png)
