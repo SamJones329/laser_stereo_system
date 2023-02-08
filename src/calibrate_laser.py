@@ -1,5 +1,7 @@
 #!/usr/bin/python
 
+# TODO - add visualization parameter and don't import ros stuff when set to false
+
 from cv2 import minAreaRect
 import rospy
 import numpy as np
@@ -13,11 +15,7 @@ from sensor_msgs import point_cloud2
 from std_msgs.msg import Header
 from geometry_msgs.msg import PolygonStamped, Point32
 from visualization_msgs.msg import Marker, MarkerArray
-import random
-import tf.transformations
 from jsk_recognition_msgs.msg import PolygonArray
-###from laser_stereo_system import CvFixes
-###cvf = CvFixes()
 
 from helpers import *
 
@@ -136,7 +134,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
     ptpub = rospy.Publisher('chessboard_pts', PointCloud2, queue_size=10)
     planepub = rospy.Publisher('laser_planes', PolygonArray, queue_size=10)
-    planenormpub = rospy.Publisher('laser_plane_normals', MarkerArray, queue_size=10)
 
     s = chessboard_interior_dimensions
     n = 15 # number of laser lines
@@ -203,7 +200,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         k_b = 0.2
 
         # I_L = f(k_r,k_g,k_b) = k_r*I_R + k_g*I_G + k_b*I_B, ||(k_r,k_g,k_b)|| <= 1
-        I_L = k_r * frame[:,:,0] + k_g * frame[:,:,1] + k_b * frame[:,:,2]
+        I_L = k_b * frame[:,:,0] + k_g * frame[:,:,1] + k_r * frame[:,:,2]
         I_L_img = I_L.copy()
         # TODO - figure out if should normalize I_L, but don't think it matter since are looking for a max
         # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
@@ -363,12 +360,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         hlp_laser_img_disp = frame.copy()
 
         print("Number of line patch member points: %d" % numpts)
-        # lines = np.empty((15,1,3))
-        # lines = np.empty((100,1,2))
-        # lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
         lines = cv.HoughLines(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80, srn=2, stn=2)#, lines=lines) #threshold=100)#numpts//80)@numpts==8000 # TODO - determine this value dynamically
-        # lines = np.array(lines)
-        # lines = cvf.HoughLinesFix(laser_img_8uc1, 1, np.pi / 180, threshold=numpts//80)
         print(lines.shape)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
         print("\nLines: ")
@@ -624,35 +616,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         M = 3
         npLineP = np.array(lineP) # type: np.ndarray
 
-        # print("npLineP shape")
-        # print(npLineP.shape)
-
         shuffled = npLineP.copy()
         np.random.shuffle(shuffled)
         subsets = np.array_split(shuffled, M)
-        # print("subshape")
-        # print(len(subsets))
-        # for arr in subsets: print(arr.shape)
-        print(len(subsets))
-        for idx, subset in enumerate(subsets): 
-            print("subset %d" % idx)
-            print(subset.shape)
         for subset in subsets:
-            print(subset.shape)
-
-            # plane fitting
-            # nx3 input
-            # get centroid
-            # get all pts relative to centroid
-            # input centroid-relative array into numpy svd fn
-            # use v[2] as normal vector of fitted plane
-            # Note, that using the second, i.e. last element relies on the fact that numpy (LAPACK) returns the singular values in descending order.
-            # normalize normal vector by dividing it by norm
-            # 
-
-            # compute centroid c_j of p_j
-            # c = np.average(subset[:,0]), np.average(subset[:,1]), np.average(subset[:,2]) # x, y, z
-           
             #1.calculate centroid of points and make points relative to it
             centroid = subset.mean(axis = 0)
             subsetT = subset.T
@@ -684,7 +651,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     planemsgs = PolygonArray()
     planemsgs.header.frame_id = "/world"
     planemsgs.header.stamp = rospy.Time.now()
-    planenormmsgs = MarkerArray()
     for idx, plane in enumerate(planes):
         t = rospy.Time.now()
         fid = "/world"
@@ -692,34 +658,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         planepolygon.header.frame_id = fid
         planepolygon.header.stamp = t
 
-        normalMarker = Marker()
-        normalMarker.header.frame_id = fid
-        normalMarker.header.stamp = t
-
         centroid, normal = plane
-
-        normalMarker.type = Marker.ARROW
-        normalMarker.color.b = 0.0
-        normalMarker.color.g = 1.0
-        normalMarker.color.r = 0.0
-        normalMarker.color.a = 0.8
-        normalMarker.scale.x = 0.1
-        normalMarker.scale.y = 0.005
-        normalMarker.scale.z = 0.005
-        normalMarker.id = idx
-        normalMarker.pose.position.x = centroid[0]
-        normalMarker.pose.position.y = centroid[1]
-        normalMarker.pose.position.z = centroid[2]
-        refvec = np.array([1,0,0])
-        a = np.cross(refvec, normal)
-        normalMarker.pose.orientation.x = a[0]
-        normalMarker.pose.orientation.y = a[1]
-        normalMarker.pose.orientation.z = a[2]
-        # sqrt((v1.length ^ 2) * (v2.length ^ 2)) + dotproduct(v1, v2)
-        # refvec and normal are both normalized so magnitude is 1
-        normalMarker.pose.orientation.w = 1 + refvec.dot(normal) 
-
-        planenormmsgs.markers.append(normalMarker)
 
         # have to append points in right order to get surface
         # centroid = Q = (a,b,c)
@@ -768,7 +707,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         planemsgs.polygons.append(planepolygon)
 
     planepub.publish(planemsgs)
-    planenormpub.publish(planenormmsgs)
         # could maybe just use information better to extract a homography for the plane instead of the plane normal and stuff
 
     # save planes in file in <a,b,c,A,B,C> format where centroid is (a,b,c) and normal is (A,B,C)
