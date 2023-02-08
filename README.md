@@ -1,7 +1,7 @@
 # laser_stereo_system
 Undergraduate thesis work on underwater active stereo.
 
-# Calibration [WIP]
+# Calibration
 `calibrate_laser.py` in the `src` directory contains a script for extracting extrinsic parameters of the laser relative to a given rectified images and the camera matrix.
 
 Currently, this file will extract the homography of a chessboard plane in frame and identify continguous laser patches in the image. 
@@ -44,3 +44,17 @@ Algorithm
 Results
 ![Screenshot from 2023-02-06 13-35-09](https://user-images.githubusercontent.com/55857337/217612632-7916ff6b-9325-4143-bc96-0054db7cc7ed.png)
 ![Screenshot from 2023-02-06 13-35-24](https://user-images.githubusercontent.com/55857337/217612667-1a152402-a907-49a5-999e-eb964ef60e53.png)
+
+
+# Real-Time Detection [WIP]
+Real time detection of laser lines and use with stereo information utilizes the same laser detection steps as the calibration algorithm, except with additional parallelizations utilizing the GPU via CuPy and Numba python CUDA libraries to decrease processing time.
+
+### Laser Color Reward Image
+
+### Potential Laser Pixels
+
+### Laser Subpixels
+
+### Detected Laser Lines
+
+### 3D Laser Point Extraction
