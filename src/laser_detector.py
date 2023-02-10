@@ -1,6 +1,7 @@
 from functools import wraps
+import math
 import time
-import cupy as cp
+# import cupy as cp
 import numpy as np
 from numba import cuda, prange
 import numba as nb
@@ -41,33 +42,29 @@ def generate_laser_reward_image(img, color_weights):
     # return img[:,:,0] * color_weights[0] + img[:,:,1] * color_weights[1] + img[:,:,2] * color_weights[2]
 
 
-@timeit
 @cuda.jit
-def gpu_gvals(img):
-    rows = img.shape[0]
-    cols = img.shape[1]
-    gvals = []
-    for col in nb.prange(cols):
-        for winstart in nb.prange(rows-WINLEN):
-            G = 0
-            for row in nb.prange(winstart, winstart+WINLEN):
-                G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * img[row,col] #idk if this last part is right
-            gvals.append((col, winstart+WINLEN//2, G))
-    return gvals
+def gpu_gvals(img, out):
+    winstartrow, winstartcol = cuda.grid(2)
+    if(winstartrow % 64 == 0 and winstartcol % 64 == 0): print((winstartrow, winstartcol))
+    if(winstartrow + WINLEN < img.shape[0] and winstartcol < img.shape[1]):
+        G = 0
+        for row in range(winstartrow, winstartrow+WINLEN):
+            G += (1 - 2*abs(winstartrow - row + (WINLEN - 1) / 2)) * img[row, winstartcol] #idk if this last part is right
+        out[winstartrow,winstartcol] = G
 
-@timeit
-@nb.jit
-def cpu_mt_gvals(img):
-    rows = img.shape[0]
-    cols = img.shape[1]
-    gvals = []
-    for col in prange(cols):
-        for winstart in prange(rows-WINLEN):
-            G = 0
-            for row in prange(winstart, winstart+WINLEN):
-                G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * img[row,col] #idk if this last part is right
-            gvals.append((col, winstart+WINLEN//2, G))
-    return gvals
+# @timeit
+# @nb.jit
+# def cpu_mt_gvals(img):
+#     rows = img.shape[0]
+#     cols = img.shape[1]
+#     gvals = []
+#     for col in prange(cols):
+#         for winstart in prange(rows-WINLEN):
+#             G = 0
+#             for row in prange(winstart, winstart+WINLEN):
+#                 G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * img[row,col] #idk if this last part is right
+#             gvals.append((col, winstart+WINLEN//2, G))
+#     return gvals
 
 @timeit
 def cpu_gvals(img):
@@ -85,7 +82,7 @@ def cpu_gvals(img):
 def generate_candidate_laser_pt_img(img):
     '''Takes a greyscale laser reward image and thresholds it to a binary image
 
-    :param img: MxN greyscale cv.Mat image or otherwise compatible arraylike
+    :param img: MxN greyscale cv.Mat image or otherwise compatible arraylike with dtype=np.float32
 
     :return: MxN binary cv.Mat image or otherwise compatible arraylike
     ''' 
@@ -122,9 +119,31 @@ def generate_candidate_laser_pt_img(img):
     #     d_out = cuda.device_array(rows)
     #     integrate[nbr_block_per_grid, nbr_thread_per_block](d_col, d_out)
         # need to compare with memoization
+    threadsperblock = (128,128)
+    blockspergrid_x = int(math.ceil(img.shape[0] / threadsperblock[0]))
+    blockspergrid_y = int(math.ceil(img.shape[1] / threadsperblock[1]))
+    blockspergrid = (blockspergrid_x, blockspergrid_y)
+    print(f"Blockspergrid {blockspergrid}")
+    print(img.shape)
 
-    gpu_gvals(img)
+    start_time = time.perf_counter()
+    d_img = cuda.to_device(img)
+    output_global_mem = cuda.device_array(img.shape)
+    gpu_gvals[blockspergrid, threadsperblock](d_img, output_global_mem)
+    output = output_global_mem.copy_to_host()
+    end_time = time.perf_counter()
+    total_time = end_time - start_time
+    print(output)
+    print(f'GPU gval gen took {total_time:.4f} seconds')
+
+    start_time = time.perf_counter()
     cpu_gvals(img)
+    end_time = time.perf_counter()
+    total_time = end_time - start_time
+    print(f'CPU gval gen took {total_time:.4f} seconds')
+
+
+    
 
     # threshold
 
@@ -152,30 +171,29 @@ def extract_laser_points(img):
 
 if __name__ == "__main__":
     # example
-    x = cp.arange(10, dtype=cp.float32).reshape(2,5)
-    y = cp.arange(5, dtype=cp.float32)
-    parallel_sum = cp.ElementwiseKernel(
-        'float32 x, float32 y',
-        'float32 z',
-        'z = x + y',
-        'parallel_sum'
-    )
-    z = cp.empty((2,5), dtype=cp.float32)
-    parallel_sum(x,y,z)
+    # x = cp.arange(10, dtype=cp.float32).reshape(2,5)
+    # y = cp.arange(5, dtype=cp.float32)
+    # parallel_sum = cp.ElementwiseKernel(
+    #     'float32 x, float32 y',
+    #     'float32 z',
+    #     'z = x + y',
+    #     'parallel_sum'
+    # )
+    # z = cp.empty((2,5), dtype=cp.float32)
+    # parallel_sum(x,y,z)
 
 
     # gvals generation comparison
-    testimg = Image.open('src/laser_stereo_system/calib_imgs/image1.png')
+    testimg = Image.open('calib_imgs/image1.png')
     npimg = np.asarray(testimg)
-    cpimg = cp.asarray(testimg)
     start_time = time.perf_counter()
     color_weights = (0.08, 0.85, 0.2)
-    reward = npimg * color_weights
+    reward = np.sum(npimg * color_weights, axis=2)
     end_time = time.perf_counter()
     total_time = end_time - start_time
     print(f'Numpy reward img took {total_time:.4f} seconds')
 
-    # gvals = generate_candidate_laser_pt_img(reward)
+    gvals = generate_candidate_laser_pt_img(reward)
 
 
     
