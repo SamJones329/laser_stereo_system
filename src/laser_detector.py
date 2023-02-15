@@ -1,7 +1,8 @@
 from functools import wraps
 import math
+import os
 import time
-# import cupy as cp
+import cupy
 import numpy as np
 from numba import cuda, prange
 import numba as nb
@@ -9,6 +10,7 @@ from PIL import Image
 
 # Constants, should move these to param yaml file if gonna use with ROS
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
+GVAL_MAX_VAL = -2000.
 
 def timeit(func):
     @wraps(func)
@@ -45,7 +47,7 @@ def generate_laser_reward_image(img, color_weights):
 @cuda.jit
 def gpu_gvals(img, out):
     winstartrow, winstartcol = cuda.grid(2)
-    if(winstartrow % 64 == 0 and winstartcol % 64 == 0): print((winstartrow, winstartcol))
+    # if(winstartrow % 64 == 0 and winstartcol % 64 == 0): print(winstartrow, winstartcol)
     if(winstartrow + WINLEN < img.shape[0] and winstartcol < img.shape[1]):
         G = 0
         for row in range(winstartrow, winstartrow+WINLEN):
@@ -119,12 +121,12 @@ def generate_candidate_laser_pt_img(img):
     #     d_out = cuda.device_array(rows)
     #     integrate[nbr_block_per_grid, nbr_thread_per_block](d_col, d_out)
         # need to compare with memoization
-    threadsperblock = (128,128)
+    threadsperblock = (32,32) # thread dims multiplied must not exceed max threads per block
     blockspergrid_x = int(math.ceil(img.shape[0] / threadsperblock[0]))
     blockspergrid_y = int(math.ceil(img.shape[1] / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
-    print(f"Blockspergrid {blockspergrid}")
-    print(img.shape)
+    print(f"\nBlockDimX = {blockspergrid[0]} \nBlockDimY = {blockspergrid[1]} \nthreadsPerBlock = {threadsperblock}\n")
+    print(f"Image shape: {img.shape}\n")
 
     start_time = time.perf_counter()
     d_img = cuda.to_device(img)
@@ -134,18 +136,23 @@ def generate_candidate_laser_pt_img(img):
     end_time = time.perf_counter()
     total_time = end_time - start_time
     print(output)
-    print(f'GPU gval gen took {total_time:.4f} seconds')
+    print(f'\nGPU gval gen took {total_time:.4f} seconds')
 
-    start_time = time.perf_counter()
-    cpu_gvals(img)
-    end_time = time.perf_counter()
-    total_time = end_time - start_time
-    print(f'CPU gval gen took {total_time:.4f} seconds')
-
-
-    
+    # start_time = time.perf_counter()
+    # cpu_gvals(img)
+    # end_time = time.perf_counter()
+    # total_time = end_time - start_time
+    # print(f'CPU gval gen took {total_time:.4f} seconds')    
 
     # threshold
+    # can use this to help choose threshold
+    # expectedgoodgvals = int(img.shape[0] * 15 * 1.6)#1.4) # room for plenty of outliers
+    # gvals = np.sort(output.flatten())
+    # print(f"Gvals Stats \n\tmean: {np.average(gvals)} \n\tmedian: {np.median(gvals)} \n\tmin: {np.min(gvals)} \n\tmax:{np.max(gvals)}")
+    # goodgvals = gvals[:expectedgoodgvals]
+    # print(f"Good Gvals Stats \n\tmean: {np.average(goodgvals)} \n\tmedian: {np.median(goodgvals)} \n\tmin: {np.min(goodgvals)} \n\tmax:{np.max(goodgvals)}")
+    output = output < GVAL_MAX_VAL * output #use cp array here?
+
 
 def imagept_laserplane_assoc(img, planes):
     # type:(cp.ndarray, list[tuple(float, float, float)]) -> list[list[tuple(float,float,float)]]
@@ -170,6 +177,27 @@ def extract_laser_points(img):
 
 
 if __name__ == "__main__":
+
+    gpu = cuda.get_current_device()
+    print(gpu)
+    print(type(gpu))
+    print("name = %s" % gpu.name)
+    print("maxThreadsPerBlock = %s" % str(gpu.MAX_THREADS_PER_BLOCK))
+    print("maxBlockDimX = %s" % str(gpu.MAX_BLOCK_DIM_X))
+    print("maxBlockDimY = %s" % str(gpu.MAX_BLOCK_DIM_Y))
+    print("maxBlockDimZ = %s" % str(gpu.MAX_BLOCK_DIM_Z))
+    print("maxGridDimX = %s" % str(gpu.MAX_GRID_DIM_X))
+    print("maxGridDimY = %s" % str(gpu.MAX_GRID_DIM_Y))
+    print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
+    print("maxSharedMemoryPerBlock = %s" % str(gpu.MAX_SHARED_MEMORY_PER_BLOCK))
+    print("asyncEngineCount = %s" % str(gpu.ASYNC_ENGINE_COUNT))
+    print("canMapHostMemory = %s" % str(gpu.CAN_MAP_HOST_MEMORY))
+    print("multiProcessorCount = %s" % str(gpu.MULTIPROCESSOR_COUNT))
+    print("warpSize = %s" % str(gpu.WARP_SIZE))
+    print("unifiedAddressing = %s" % str(gpu.UNIFIED_ADDRESSING))
+    print("pciBusID = %s" % str(gpu.PCI_BUS_ID))
+    print("pciDeviceID = %s" % str(gpu.PCI_DEVICE_ID))
+
     # example
     # x = cp.arange(10, dtype=cp.float32).reshape(2,5)
     # y = cp.arange(5, dtype=cp.float32)
@@ -184,17 +212,44 @@ if __name__ == "__main__":
 
 
     # gvals generation comparison
-    testimg = Image.open('calib_imgs/image1.png')
-    npimg = np.asarray(testimg)
-    start_time = time.perf_counter()
-    color_weights = (0.08, 0.85, 0.2)
-    reward = np.sum(npimg * color_weights, axis=2)
-    end_time = time.perf_counter()
-    total_time = end_time - start_time
-    print(f'Numpy reward img took {total_time:.4f} seconds')
+    img_folder = "calib_imgs"
+    imgs = []
+    cpimgs = []
+    filenames = []
+    for filename in os.listdir(img_folder):
+        img = Image.open(os.path.join(img_folder, filename))
+        if img is not None:
+            imgs.append(np.asarray(img))
+            cpimgs.append(cupy.asarray(img))
+            filenames.append(filename)
+    print("found images: %s\n" % filenames)
 
-    gvals = generate_candidate_laser_pt_img(reward)
+    numpyrewardtimes = 0
+    for img in imgs:
+        start_time = time.perf_counter()
+        color_weights = (0.08, 0.85, 0.2)
+        reward = np.sum(img * color_weights, axis=2)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        numpyrewardtimes += total_time
+        print(f'\nNumpy reward img took {total_time:.4f} seconds')
 
+        gvals = generate_candidate_laser_pt_img(reward)
+    
+    cupyrewardtimes = 0
+    for img in imgs:
+        start_time = time.perf_counter()
+        color_weights = (0.08, 0.85, 0.2)
+        reward = cupy.sum(img * color_weights, axis=2)
+        end_time = time.perf_counter()
+        total_time = end_time - start_time
+        cupyrewardtimes += total_time
+        print(f'Cupy reward img took {total_time:.4f} seconds')
+
+        gvals = generate_candidate_laser_pt_img(reward)
+    
+    print(f'\nNumpy reward img avg = {numpyrewardtimes/len(imgs):.4f} seconds')
+    print(f'\nCupy reward img avg = {cupyrewardtimes/len(imgs):.4f} seconds')
 
     
 
