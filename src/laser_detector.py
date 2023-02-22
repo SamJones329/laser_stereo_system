@@ -12,6 +12,9 @@ from PIL import Image
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
 GVAL_MAX_VAL = -2000.
 
+gpu = cuda.get_current_device()
+maxthreadsperblock2d = math.floor(math.sqrt(gpu.MAX_THREADS_PER_BLOCK))
+
 def timeit(func):
     @wraps(func)
     def timeit_wrapper(*args, **kwargs):
@@ -121,7 +124,7 @@ def generate_candidate_laser_pt_img(img):
     #     d_out = cuda.device_array(rows)
     #     integrate[nbr_block_per_grid, nbr_thread_per_block](d_col, d_out)
         # need to compare with memoization
-    threadsperblock = (32,32) # thread dims multiplied must not exceed max threads per block
+    threadsperblock = (maxthreadsperblock2d, maxthreadsperblock2d)# (32,32) # thread dims multiplied must not exceed max threads per block
     blockspergrid_x = int(math.ceil(img.shape[0] / threadsperblock[0]))
     blockspergrid_y = int(math.ceil(img.shape[1] / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
@@ -153,6 +156,107 @@ def generate_candidate_laser_pt_img(img):
     # print(f"Good Gvals Stats \n\tmean: {np.average(goodgvals)} \n\tmedian: {np.median(goodgvals)} \n\tmin: {np.min(goodgvals)} \n\tmax:{np.max(goodgvals)}")
     output = output < GVAL_MAX_VAL * output #use cp array here?
 
+@timeit
+def threshold_gvals(gval_img):
+    return gval_img < GVAL_MAX_VAL * gval_img
+
+@timeit
+def find_gval_subpixels(goodgvals):
+    subpixel_offsets = np.zeros(goodgvals.shape)
+    offset_from_winstart_to_center = WINLEN // 2
+
+    for row in goodgvals:
+        for col in goodgvals:
+            # center of window
+            center = row + offset_from_winstart_to_center
+            
+            # f(x), f(x-1), f(x+1)
+            fx = goodgvals[center, col]
+            fxm = goodgvals[center, col-1]
+            fxp = goodgvals[center, col+1]
+            denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
+            if denom == 0:
+                # 5px Center of Mass (CoM5) detector
+                fxp2 = I_L[y,x+2] # f(x+2)
+                fxm2 = I_L[y,x-2] # f(x-2)
+                num = 2*fxp2 + fxp - fxm - 2*fxm2
+                denom = fxm2 + fxm + fx + fxp + fxp2
+                subpixel_offset = num / denom
+            else:
+                numer = math.log(fxm) - math.log(fxp)
+                subpixel_offset = 0.5 * numer / denom
+
+            if x + subpixel_offset < 0 or col + subpixel_offset > laser_img.shape[1]: 
+                continue
+            laser_img[y,int(x+subpixel_offset)] = 1.0
+            laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
+
+    laser_subpixels = np.full(gray.shape, 0.0, dtype=np.float)
+    laser_img = np.full(gray.shape, 0.0, dtype=np.float)
+    badoffsets = 0
+    for window in gvals:
+        # center of window
+        x, y = int(window[0]), int(window[1])
+        # f(x), f(x-1), f(x+1)
+        fx = I_L[y,x]
+        fxm = I_L[y,x-1]
+        fxp = I_L[y,x+1]
+        denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
+        if denom == 0:
+            # 5px Center of Mass (CoM5) detector
+            fxp2 = I_L[y,x+2] # f(x+2)
+            fxm2 = I_L[y,x-2] # f(x-2)
+            num = 2*fxp2 + fxp - fxm - 2*fxm2
+            denom = fxm2 + fxm + fx + fxp + fxp2
+            subpixel_offset = num / denom
+        else:
+            numer = math.log(fxm) - math.log(fxp)
+            subpixel_offset = 0.5 * numer / denom
+        if abs(subpixel_offset) > winlen//2:
+            badoffsets += 1
+        if x + subpixel_offset < 0 or x + subpixel_offset > laser_img.shape[1]: 
+            continue
+        laser_img[y,int(x+subpixel_offset)] = 1.0
+        laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
+    print("%d bad offsets" % badoffsets)
+
+@timeit
+def throw_out_small_patches(gval_subpixels):
+    patches = []
+    # find patches
+    for row in range(laser_subpixels.shape[0]):
+        for col in range(laser_subpixels.shape[1]):
+            val = laser_subpixels[row,col]
+            if val > 1e-6: # found laser px, look for patch
+                patch = [(row,col,val)]
+                laser_subpixels[row,col] = 0.
+                recurse_patch(row, col, patch, laser_subpixels)
+                if len(patch) >= 5:
+                    patches.append(patch)
+
+    laser_patch_img = np.zeros(gray.shape)
+    numpts = 0
+    for patch in patches:
+        for val in patch:
+            row, col, _ = val
+            laser_patch_img[row, col] = 1.
+            numpts += 1
+
+    laser_img_8uc1 = np.uint8(laser_img * 255)
+    laser_patch_img_8uc1 = np.uint8(laser_patch_img * 255)
+    hlp_laser_img = laser_patch_img_8uc1.copy()
+    hlp_laser_img_disp = frame.copy()
+
+    print("Number of line patch member points: %d" % numpts)
+
+SEGMENT_HOUGH_LINES_P = 0
+SEGMENT_MAX_SPAN_TREE = 1
+@timeit
+def segment_laser_lines(img, segment_mode):
+    if segment_mode == SEGMENT_HOUGH_LINES_P:
+        pass
+    elif segment_mode == SEGMENT_MAX_SPAN_TREE:
+        pass
 
 def imagept_laserplane_assoc(img, planes):
     # type:(cp.ndarray, list[tuple(float, float, float)]) -> list[list[tuple(float,float,float)]]
@@ -235,6 +339,7 @@ if __name__ == "__main__":
         print(f'\nNumpy reward img took {total_time:.4f} seconds')
 
         gvals = generate_candidate_laser_pt_img(reward)
+        goodgvals = threshold_gvals(gvals)
     
     cupyrewardtimes = 0
     for img in imgs:
