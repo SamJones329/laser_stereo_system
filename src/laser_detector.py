@@ -217,7 +217,7 @@ SEGMENT_MAX_SPAN_TREE = 1
 @timeit
 def segment_laser_lines(img, segment_mode):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
-        cv.HoughLinesP(img, 1, np.pi / 180, threshold=100, srn=2, stn=2)
+        cv.HoughLinesP(img, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
     elif segment_mode == SEGMENT_MAX_SPAN_TREE:
         # Let 15 parallel lines be defined as 15 groups of indexes or labels k = {1, 2, . . . , 25}. Let
         # Pl = {p1, p2, . . . , pm} a group of pixels who share at least one corner. We define pa a
