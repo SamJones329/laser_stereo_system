@@ -2,11 +2,12 @@ from functools import wraps
 import math
 import os
 import time
-import cupy
 import numpy as np
 from numba import cuda, prange
 import numba as nb
 from PIL import Image
+from helpers import recurse_patch, maximumSpanningTree
+import cv2 as cv
 
 # Constants, should move these to param yaml file if gonna use with ROS
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
@@ -172,91 +173,67 @@ def find_gval_subpixels(goodgvals):
             
             # f(x), f(x-1), f(x+1)
             fx = goodgvals[center, col]
-            fxm = goodgvals[center, col-1]
-            fxp = goodgvals[center, col+1]
+            fxm = goodgvals[center-1, col]
+            fxp = goodgvals[center+1, col]
             denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
             if denom == 0:
                 # 5px Center of Mass (CoM5) detector
-                fxp2 = I_L[y,x+2] # f(x+2)
-                fxm2 = I_L[y,x-2] # f(x-2)
+                fxp2 = goodgvals[center+2, col] # f(x+2)
+                fxm2 = goodgvals[center-2, col] # f(x-2)
                 num = 2*fxp2 + fxp - fxm - 2*fxm2
                 denom = fxm2 + fxm + fx + fxp + fxp2
                 subpixel_offset = num / denom
             else:
                 numer = math.log(fxm) - math.log(fxp)
                 subpixel_offset = 0.5 * numer / denom
-
-            if x + subpixel_offset < 0 or col + subpixel_offset > laser_img.shape[1]: 
-                continue
-            laser_img[y,int(x+subpixel_offset)] = 1.0
-            laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
-
-    laser_subpixels = np.full(gray.shape, 0.0, dtype=np.float)
-    laser_img = np.full(gray.shape, 0.0, dtype=np.float)
-    badoffsets = 0
-    for window in gvals:
-        # center of window
-        x, y = int(window[0]), int(window[1])
-        # f(x), f(x-1), f(x+1)
-        fx = I_L[y,x]
-        fxm = I_L[y,x-1]
-        fxp = I_L[y,x+1]
-        denom = math.log(fxm) - 2 * math.log(fx) + math.log(fxp)
-        if denom == 0:
-            # 5px Center of Mass (CoM5) detector
-            fxp2 = I_L[y,x+2] # f(x+2)
-            fxm2 = I_L[y,x-2] # f(x-2)
-            num = 2*fxp2 + fxp - fxm - 2*fxm2
-            denom = fxm2 + fxm + fx + fxp + fxp2
-            subpixel_offset = num / denom
-        else:
-            numer = math.log(fxm) - math.log(fxp)
-            subpixel_offset = 0.5 * numer / denom
-        if abs(subpixel_offset) > winlen//2:
-            badoffsets += 1
-        if x + subpixel_offset < 0 or x + subpixel_offset > laser_img.shape[1]: 
-            continue
-        laser_img[y,int(x+subpixel_offset)] = 1.0
-        laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
-    print("%d bad offsets" % badoffsets)
+            subpixel_offsets[center, col] = subpixel_offset
+    return subpixel_offsets
 
 @timeit
 def throw_out_small_patches(gval_subpixels):
     patches = []
     # find patches
-    for row in range(laser_subpixels.shape[0]):
-        for col in range(laser_subpixels.shape[1]):
-            val = laser_subpixels[row,col]
+    for row in range(gval_subpixels.shape[0]):
+        for col in range(gval_subpixels.shape[1]):
+            val = gval_subpixels[row,col]
             if val > 1e-6: # found laser px, look for patch
                 patch = [(row,col,val)]
-                laser_subpixels[row,col] = 0.
-                recurse_patch(row, col, patch, laser_subpixels)
+                gval_subpixels[row,col] = 0.
+                recurse_patch(row, col, patch, gval_subpixels)
                 if len(patch) >= 5:
                     patches.append(patch)
 
-    laser_patch_img = np.zeros(gray.shape)
-    numpts = 0
+    laser_patch_img = np.zeros(gval_subpixels.shape)
     for patch in patches:
         for val in patch:
             row, col, _ = val
-            laser_patch_img[row, col] = 1.
-            numpts += 1
+            laser_patch_img[row, col] = gval_subpixels[row, col]
+    return laser_patch_img            
 
-    laser_img_8uc1 = np.uint8(laser_img * 255)
-    laser_patch_img_8uc1 = np.uint8(laser_patch_img * 255)
-    hlp_laser_img = laser_patch_img_8uc1.copy()
-    hlp_laser_img_disp = frame.copy()
 
-    print("Number of line patch member points: %d" % numpts)
 
 SEGMENT_HOUGH_LINES_P = 0
 SEGMENT_MAX_SPAN_TREE = 1
 @timeit
 def segment_laser_lines(img, segment_mode):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
-        pass
+        cv.HoughLinesP(img, 1, np.pi / 180, threshold=100, srn=2, stn=2)
     elif segment_mode == SEGMENT_MAX_SPAN_TREE:
-        pass
+        # Let 15 parallel lines be defined as 15 groups of indexes or labels k = {1, 2, . . . , 25}. Let
+        # Pl = {p1, p2, . . . , pm} a group of pixels who share at least one corner. We define pa a
+        # neighbour pixel of pb if there exists one or more rows of pa shared with pb without any other
+        # detected laser peak between them. The Pl groups of pixels can then be drawn as nodes in a
+        # directed graph G, whose edge weight equals the number of common rows. This directed graph
+        # is the input of a MST algorithm. The resulting simplified directed graph is then indexed as
+        # follows: the node that does not have any parent is indexed as index 1. Then, the graph is
+        # traversed and its indexing increased when an edge is followed from parents to children. This
+        # yields an index for every connected vertex. An example of this approach can be seen in figure
+        # 4.5. In our application, the pattern has a central dot which belongs to the central line (e.g.
+        # index 13). The node belonging to that dot is labelled as k = 13 and the indexing occurs
+        # traversing the graph forwards and backwards.
+        graph = []
+        mst = maximumSpanningTree(graph)
+
 
 def imagept_laserplane_assoc(img, planes):
     # type:(cp.ndarray, list[tuple(float, float, float)]) -> list[list[tuple(float,float,float)]]
