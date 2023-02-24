@@ -231,8 +231,15 @@ def segment_laser_lines(img, segment_mode):
         # 4.5. In our application, the pattern has a central dot which belongs to the central line (e.g.
         # index 13). The node belonging to that dot is labelled as k = 13 and the indexing occurs
         # traversing the graph forwards and backwards.
-        graph = []
-        # 
+
+        # create pixel groups
+        groups = []
+        numgroups = len(groups)
+        
+        # create graph where a pixel group is connected to another pixel group by an edge with 
+        # weight representing the number of shared rows
+        graph = np.zeros((numgroups, numgroups), dtype=np.int)
+
         mst = maximumSpanningTree(graph)
 
 
