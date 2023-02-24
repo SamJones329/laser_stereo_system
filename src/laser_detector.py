@@ -191,22 +191,22 @@ def find_gval_subpixels(goodgvals):
 
 @timeit
 def throw_out_small_patches(gval_subpixels):
+    laser_patch_img = np.copy(gval_subpixels)
     patches = []
     # find patches
-    for row in range(gval_subpixels.shape[0]):
-        for col in range(gval_subpixels.shape[1]):
-            val = gval_subpixels[row,col]
+    for row in range(laser_patch_img.shape[0]):
+        for col in range(laser_patch_img.shape[1]):
+            val = laser_patch_img[row,col]
             if val > 1e-6: # found laser px, look for patch
-                patch = [(row,col,val)]
-                gval_subpixels[row,col] = 0.
-                recurse_patch(row, col, patch, gval_subpixels)
+                patch = [(row,col)]
+                laser_patch_img[row,col] = 0.
+                recurse_patch(row, col, patch, laser_patch_img)
                 if len(patch) >= 5:
                     patches.append(patch)
 
-    laser_patch_img = np.zeros(gval_subpixels.shape)
     for patch in patches:
         for val in patch:
-            row, col, _ = val
+            row, col = val
             laser_patch_img[row, col] = gval_subpixels[row, col]
     return laser_patch_img            
 
@@ -232,6 +232,7 @@ def segment_laser_lines(img, segment_mode):
         # index 13). The node belonging to that dot is labelled as k = 13 and the indexing occurs
         # traversing the graph forwards and backwards.
         graph = []
+        # 
         mst = maximumSpanningTree(graph)
 
 
