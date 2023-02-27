@@ -3,11 +3,11 @@ import math
 import os
 import time
 import numpy as np
-from numba import cuda, prange
-import numba as nb
+from numba import cuda
 from PIL import Image
 from helpers import recurse_patch, maximumSpanningTree
 import cv2 as cv
+import cupy
 
 # Constants, should move these to param yaml file if gonna use with ROS
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
@@ -155,7 +155,8 @@ def generate_candidate_laser_pt_img(img):
     # print(f"Gvals Stats \n\tmean: {np.average(gvals)} \n\tmedian: {np.median(gvals)} \n\tmin: {np.min(gvals)} \n\tmax:{np.max(gvals)}")
     # goodgvals = gvals[:expectedgoodgvals]
     # print(f"Good Gvals Stats \n\tmean: {np.average(goodgvals)} \n\tmedian: {np.median(goodgvals)} \n\tmin: {np.min(goodgvals)} \n\tmax:{np.max(goodgvals)}")
-    output = output < GVAL_MAX_VAL * output #use cp array here?
+    # output = output < GVAL_MAX_VAL * output #use cp array here?
+    return output
 
 @timeit
 def threshold_gvals(gval_img):
@@ -293,11 +294,17 @@ if __name__ == "__main__":
 
 
     # gvals generation comparison
-    img_folder = "calib_imgs"
+    curdir = os.getcwd()
+    folders = curdir.split('/')
+    if folders[-1] == "catkin_ws":
+        img_folder = "src/laser_stereo_system/calib_imgs"
+    else: 
+        img_folder = "calib_imgs"
     imgs = []
     cpimgs = []
     filenames = []
     for filename in os.listdir(img_folder):
+        print(f"opening ${filename}")
         img = Image.open(os.path.join(img_folder, filename))
         if img is not None:
             imgs.append(np.asarray(img))
