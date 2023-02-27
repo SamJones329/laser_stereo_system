@@ -20,30 +20,45 @@ def draw(img, corners, imgpts):
 
 def recurse_patch(row, col, patch, img):
     # type:(int, int, set, cv.Mat) -> None
+
+    # we define contiguity by being within 3 pixels of the source pixel
+    # therefore there is a 7x7 box around the original pixel in which to search for pixels
+    for i in range(-3,4): # [-3, -2, -1, 0, 2, 3]
+        searchingrow = row + i
+        for j in range(-3,4):
+            searchingcol = col + j
+            if searchingrow < 0 or searchingrow >= img.shape[0] or searchingcol < 0 or searchingcol >= img.shape[1]:   
+                if img[searchingrow, searchingcol] > 1e-6:
+                    patch.append((searchingrow,searchingcol))
+                    img[searchingrow, searchingcol] = 0
+                    recurse_patch(searchingrow, searchingcol, patch, img)
+         
     # check neighbors
-    up = row-1
-    if up >= 0 and img[up, col] > 1e-6: # up
-        patch.append((up, col, img[up,col]))
-        img[up,col] = 0.
-        recurse_patch(up, col, patch, img)
+    # up = row-1
+    # if up >= 0 and img[up, col] > 1e-6: # up
+    #     patch.append((up, col, img[up,col]))
+    #     img[up,col] = 0.
+    #     recurse_patch(up, col, patch, img)
 
-    down = row+1
-    if down <= img.shape[0] and img[down, col] > 1e-6: # down
-        patch.append((down, col, img[down,col]))
-        img[down,col] = 0.
-        recurse_patch(down, col, patch, img)
+    # down = row+1
+    # if down <= img.shape[0] and img[down, col] > 1e-6: # down
+    #     patch.append((down, col, img[down,col]))
+    #     img[down,col] = 0.
+    #     recurse_patch(down, col, patch, img)
 
-    left = col-1
-    if left >= 0 and img[row, left] > 1e-6: # left
-        patch.append((row, left, img[row,left]))
-        img[row,left] = 0.
-        recurse_patch(row, left, patch, img)
+    # left = col-1
+    # if left >= 0 and img[row, left] > 1e-6: # left
+    #     patch.append((row, left, img[row,left]))
+    #     img[row,left] = 0.
+    #     recurse_patch(row, left, patch, img)
 
-    right = col+1
-    if right <= img.shape[1] and img[row, right] > 1e-6: # right
-        patch.append((row, right, img[row,right]))
-        img[row,right] = 0.
-        recurse_patch(row, right, patch, img)
+    # right = col+1
+    # if right <= img.shape[1] and img[row, right] > 1e-6: # right
+    #     patch.append((row, right, img[row,right]))
+    #     img[row,right] = 0.
+    #     recurse_patch(row, right, patch, img)
+
+    
 
 def angle_wrap(ang):
     """
