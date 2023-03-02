@@ -7,6 +7,9 @@ from numba import cuda # if cuda is not available, should set variable NUMBA_CUD
 from PIL import Image
 from helpers import recurse_patch, maximumSpanningTree
 import cv2 as cv
+import sys
+
+DEBUG_MODE = True
 
 # if cupy not available (i.e. system w/out nvidia GPU), use numpy
 try:
@@ -22,7 +25,7 @@ except:
 
 # Constants, should move these to param yaml file if gonna use with ROS
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
-GVAL_MIN_VAL = 2000.
+GVAL_MIN_VAL = 1975.
 
 
 def timeit(func):
@@ -138,7 +141,8 @@ def find_gval_subpixels(gvals, reward_img):
     subpixel_offsets = np.zeros(gvals.shape)
     offset_from_winstart_to_center = WINLEN // 2
 
-    ln_reward = np.log(reward_img)
+    with np.errstate(divide='ignore'):
+        ln_reward = np.log(reward_img) 
     for row in range(gvals.shape[0]-WINLEN//2):
         for col in range(gvals.shape[1]-WINLEN//2):
             if gvals[row,col] < GVAL_MIN_VAL: continue
@@ -150,7 +154,7 @@ def find_gval_subpixels(gvals, reward_img):
             lnfxm = ln_reward[center-1, col]
             lnfxp = ln_reward[center+1, col]
             denom = lnfxm - 2 * lnfx + lnfxp
-            if denom == 0:
+            if denom == 0 or math.isnan(denom):
                 # 5px Center of Mass (CoM5) detector
                 fx = reward_img[center, col] # f(x)
                 fxp = reward_img[center+1, col] # f(x+1)
@@ -170,17 +174,39 @@ def find_gval_subpixels(gvals, reward_img):
 def throw_out_small_patches(gval_subpixels):
     laser_patch_img = np.copy(gval_subpixels)
     patches = []
+    if DEBUG_MODE:
+        patch_lengths = []
+        patches_explored = 0
     # find patches
     for row in range(gval_subpixels.shape[0]):
         for col in range(gval_subpixels.shape[1]):
             val = laser_patch_img[row,col]
-            if val > 1e-6: # found laser px, look for patch
-                patch = [(row,col)]
-                laser_patch_img[row,col] = 0.
-                recurse_patch(row, col, patch, laser_patch_img)
+            if abs(val) > sys.float_info.min: # found laser px, look for patch
+                if DEBUG_MODE: patches_explored += 1
+                # patch = [(row,col)]
+                # laser_patch_img[row,col] = 0.
+                # recurse_patch(row, col, patch, laser_patch_img, False)
+                # patch_lengths.append(len(patch))
+
+                patch = []
+                toexplore = [(row,col)]
+
+                while toexplore:
+                    px = toexplore.pop(0)
+                    patch.append(px)
+                    explorerow, explorecol = px
+                    laser_patch_img[explorerow, explorecol] = 0
+                    for i in range(-3,4): # [-3, -2, -1, 0, 2, 3]
+                        searchingrow = row + i
+                        for j in range(-3,4):
+                            searchingcol = col + j
+                            if searchingrow > 0 and searchingrow <= laser_patch_img.shape[0] and searchingcol > 0 and searchingcol <= laser_patch_img.shape[1]:   
+                                if abs(laser_patch_img[searchingrow, searchingcol]) > 1e-6:
+                                    toexplore.append((searchingrow, searchingcol))
                 if len(patch) >= 5:
                     patches.append(patch)
 
+    if DEBUG_MODE: print(f"{patches_explored} patches explored, {len(patches)} patches found, avg patch size {np.average(patch_lengths)}")
     for patch in patches:
         for val in patch:
             row, col = val
@@ -270,21 +296,6 @@ if __name__ == "__main__":
         print("unifiedAddressing = %s" % str(gpu.UNIFIED_ADDRESSING))
         print("pciBusID = %s" % str(gpu.PCI_BUS_ID))
         print("pciDeviceID = %s" % str(gpu.PCI_DEVICE_ID))
-    
-    
-
-    # example
-    # x = cp.arange(10, dtype=cp.float32).reshape(2,5)
-    # y = cp.arange(5, dtype=cp.float32)
-    # parallel_sum = cp.ElementwiseKernel(
-    #     'float32 x, float32 y',
-    #     'float32 z',
-    #     'z = x + y',
-    #     'parallel_sum'
-    # )
-    # z = cp.empty((2,5), dtype=cp.float32)
-    # parallel_sum(x,y,z)
-
 
     # gvals generation comparison
     curdir = os.getcwd()
@@ -327,15 +338,23 @@ if __name__ == "__main__":
         total_time = end_time - start_time
         cupyrewardtimes += total_time
         print(f'Cupy reward img took {total_time:.4f} seconds')
+        cv.imshow("rew", reward / np.max(reward))
         gvals = calculate_gaussian_integral_windows(reward)
+        cv.imshow("gvals", gvals / np.max(gvals))
         subpxs = find_gval_subpixels(gvals, reward)
+        a = subpxs.copy()
+        a[subpxs != 0] = 1
+        cv.imshow("subpxs", a)
         subpxsfiltered = throw_out_small_patches(subpxs)
+        cv.imshow("subpxgfilt", subpxsfiltered)
         print(subpxsfiltered)
         laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
-        cv.threshold(subpxsfiltered, 1e-6, 255, type=cv.THRESH_BINARY, dst=laserpxbinary)
+        print(f"there are {np.count_nonzero(subpxsfiltered)} subpxs")
+        laserpxbinary[subpxsfiltered != 0] = 255
+        # retval, laserpxbinary = cv.threshold(subpxsfiltered, sys.float_info.min, 255, type=cv.THRESH_BINARY)#, dst=laserpxbinary)
+        print(f"thresholded {np.count_nonzero(laserpxbinary)} pixels")
         print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
         cv.imshow("bin", laserpxbinary)
-        cv.waitKey(0)
         # laserpxbinary = subpxsfiltered.copy()
         # laserpxbinary[laserpxbinary > 0] = 1
         # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
@@ -352,18 +371,10 @@ if __name__ == "__main__":
         if lines is not None:
             lines = lines[lines[:, 0].argsort()] 
             for i in range(0, len(lines)):
-                print("lines %s" % lines[i])
-                rho = lines[i][0]
-                theta = lines[i][1]
-                a = math.cos(theta)
-                b = math.sin(theta)
-                x0 = a * rho
-                y0 = b * rho
-                pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-                pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-                cv.line(dispimg, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
-
-    cv.waitKey(0)
+                print("line %s" % lines[i])
+                cv.line(dispimg, lines[i,:2], lines[i,2:], (0,0,255), 3, cv.LINE_AA)
+        cv.imshow("lines", dispimg)
+        cv.waitKey(0)
     cv.destroyAllWindows()
 
     
