@@ -3,18 +3,27 @@ import math
 import os
 import time
 import numpy as np
-from numba import cuda
+from numba import cuda # if cuda is not available, should set variable NUMBA_CUDA_SIM = 1 in terminal
 from PIL import Image
 from helpers import recurse_patch, maximumSpanningTree
 import cv2 as cv
-import cupy
+
+# if cupy not available (i.e. system w/out nvidia GPU), use numpy
+try:
+    import cupy
+    CUDASIM = False
+    gpu = cuda.get_current_device()
+    maxthreadsperblock2d = math.floor(math.sqrt(gpu.MAX_THREADS_PER_BLOCK))
+except:
+    import numpy as cupy
+    CUDASIM = True
+    gpu = cuda.current_context().device
+    maxthreadsperblock2d = math.floor(math.sqrt(1024))
 
 # Constants, should move these to param yaml file if gonna use with ROS
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
 GVAL_MIN_VAL = 2000.
 
-gpu = cuda.get_current_device()
-maxthreadsperblock2d = math.floor(math.sqrt(gpu.MAX_THREADS_PER_BLOCK))
 
 def timeit(func):
     @wraps(func)
@@ -185,7 +194,7 @@ SEGMENT_MAX_SPAN_TREE = 1
 @timeit
 def segment_laser_lines(img, segment_mode):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
-        return cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2)
+        return cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2, dst=np.array([]))
         return cv.HoughLinesP(img, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
     elif segment_mode == SEGMENT_MAX_SPAN_TREE:
         # Let 15 parallel lines be defined as 15 groups of indexes or labels k = {1, 2, . . . , 25}. Let
@@ -225,7 +234,6 @@ def imagept_laserplane_assoc(img, planes):
     pass
 
 def extract_laser_points(img):
-    # type:(cp.ndarray) -> list[tuple(float,float,float)]
     '''
     Finds 3D coordinates of laser points in an image
 
@@ -236,25 +244,34 @@ def extract_laser_points(img):
 
 if __name__ == "__main__":
 
-    gpu = cuda.get_current_device()
-    print(gpu)
-    print(type(gpu))
-    print("name = %s" % gpu.name)
-    print("maxThreadsPerBlock = %s" % str(gpu.MAX_THREADS_PER_BLOCK))
-    print("maxBlockDimX = %s" % str(gpu.MAX_BLOCK_DIM_X))
-    print("maxBlockDimY = %s" % str(gpu.MAX_BLOCK_DIM_Y))
-    print("maxBlockDimZ = %s" % str(gpu.MAX_BLOCK_DIM_Z))
-    print("maxGridDimX = %s" % str(gpu.MAX_GRID_DIM_X))
-    print("maxGridDimY = %s" % str(gpu.MAX_GRID_DIM_Y))
-    print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
-    print("maxSharedMemoryPerBlock = %s" % str(gpu.MAX_SHARED_MEMORY_PER_BLOCK))
-    print("asyncEngineCount = %s" % str(gpu.ASYNC_ENGINE_COUNT))
-    print("canMapHostMemory = %s" % str(gpu.CAN_MAP_HOST_MEMORY))
-    print("multiProcessorCount = %s" % str(gpu.MULTIPROCESSOR_COUNT))
-    print("warpSize = %s" % str(gpu.WARP_SIZE))
-    print("unifiedAddressing = %s" % str(gpu.UNIFIED_ADDRESSING))
-    print("pciBusID = %s" % str(gpu.PCI_BUS_ID))
-    print("pciDeviceID = %s" % str(gpu.PCI_DEVICE_ID))
+    if CUDASIM:
+        devices = cuda.list_devices()
+        print(f"devices: {devices}")
+        gpu = cuda.current_context().device
+        print(gpu)
+        print(type(gpu))
+    else:
+        gpu = cuda.get_current_device()
+        print(gpu)
+        print(type(gpu))
+        print("name = %s" % gpu.name)
+        print("maxThreadsPerBlock = %s" % str(gpu.MAX_THREADS_PER_BLOCK))
+        print("maxBlockDimX = %s" % str(gpu.MAX_BLOCK_DIM_X))
+        print("maxBlockDimY = %s" % str(gpu.MAX_BLOCK_DIM_Y))
+        print("maxBlockDimZ = %s" % str(gpu.MAX_BLOCK_DIM_Z))
+        print("maxGridDimX = %s" % str(gpu.MAX_GRID_DIM_X))
+        print("maxGridDimY = %s" % str(gpu.MAX_GRID_DIM_Y))
+        print("maxGridDimZ = %s" % str(gpu.MAX_GRID_DIM_Z))
+        print("maxSharedMemoryPerBlock = %s" % str(gpu.MAX_SHARED_MEMORY_PER_BLOCK))
+        print("asyncEngineCount = %s" % str(gpu.ASYNC_ENGINE_COUNT))
+        print("canMapHostMemory = %s" % str(gpu.CAN_MAP_HOST_MEMORY))
+        print("multiProcessorCount = %s" % str(gpu.MULTIPROCESSOR_COUNT))
+        print("warpSize = %s" % str(gpu.WARP_SIZE))
+        print("unifiedAddressing = %s" % str(gpu.UNIFIED_ADDRESSING))
+        print("pciBusID = %s" % str(gpu.PCI_BUS_ID))
+        print("pciDeviceID = %s" % str(gpu.PCI_DEVICE_ID))
+    
+    
 
     # example
     # x = cp.arange(10, dtype=cp.float32).reshape(2,5)
@@ -286,7 +303,6 @@ if __name__ == "__main__":
             imgs.append(np.asarray(img))
             cpimgs.append(cupy.asarray(img))
             filenames.append(filename)
-    print("found images: %s\n" % filenames)
 
     # numpyrewardtimes = 0
     # for img in imgs:
@@ -303,6 +319,7 @@ if __name__ == "__main__":
     
     cupyrewardtimes = 0
     for img in imgs:
+        cv.imshow("img", img)
         start_time = time.perf_counter()
         color_weights = (0.08, 0.85, 0.2)
         reward = cupy.sum(img * color_weights, axis=2) 
@@ -317,15 +334,20 @@ if __name__ == "__main__":
         laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
         cv.threshold(subpxsfiltered, 1e-6, 255, type=cv.THRESH_BINARY, dst=laserpxbinary)
         print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
+        cv.imshow("bin", laserpxbinary)
+        cv.waitKey(0)
         # laserpxbinary = subpxsfiltered.copy()
         # laserpxbinary[laserpxbinary > 0] = 1
         # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
+        arr = np.array([])
         lines = cv.HoughLines(laserpxbinary, 1, np.pi / 180, threshold=10, srn=2, stn=2)
         print(lines)
-        lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
+        print(arr)
+        lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=10, minLineLength=100, maxLineGap=5)
         print(lines)
+        print(arr)
         lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
-        dispimg = img.copy()
+        dispimg = np.copy(img)
         print("\nLines: ")
         if lines is not None:
             lines = lines[lines[:, 0].argsort()] 
