@@ -23,24 +23,6 @@ DEBUG_LINES = False
 USE_PREV_DATA = True
 # https://stackoverflow.com/questions/53591350/plane-fit-of-3d-points-with-singular-value-decomposition
 
-DISP_COLORS = [ #BGR
-    (255,0,0), # royal blue
-    (0,255,0), # green
-    (0,0,255), # brick red
-    (255,255,0), # cyan
-    (255,0,255), # magenta
-    (0,255,255), # yellow
-    (255,255,255), # white
-    (180,0,0), # dark blue
-    (0,180,0), # forest green
-    (0,0,180), # crimson
-    (180,180,0), # turquoise
-    (180,0,180), # purple
-    (0,180,180), # wheat
-    (180,180,180), # gray
-    (255,180,100), # cerulean
-]
-
 class Cam:
     '''Left Camera Params'''
 
