@@ -24,8 +24,11 @@ except:
     maxthreadsperblock2d = math.floor(math.sqrt(1024))
 
 # Constants, should move these to param yaml file if gonna use with ROS
+NUM_LASER_LINES = 15
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
 GVAL_MIN_VAL = 1975.
+MERGE_HLP_LINE_DIST_THRESH = 20
+MERGE_HLP_LINES_ANG_THRESH = 5
 
 
 def timeit(func):
@@ -170,6 +173,25 @@ def find_gval_subpixels(gvals, reward_img):
             subpixel_offsets[center, col] = subpixel_offset
     return subpixel_offsets
 
+@cuda.jit
+def gpu_patch(img, patchdict, out):
+    row, col = cuda.grid(2)
+
+
+@timeit
+def throw_out_small_patches_gpu(subpixel_offsets):
+    threadsperblock = (maxthreadsperblock2d, maxthreadsperblock2d)# (32,32) # thread dims multiplied must not exceed max threads per block
+    blockspergrid_x = int(math.ceil(subpixel_offsets.shape[0] / threadsperblock[0]))
+    blockspergrid_y = int(math.ceil(subpixel_offsets.shape[1] / threadsperblock[1]))
+    blockspergrid = (blockspergrid_x, blockspergrid_y)
+
+    d_arr = cuda.to_device(subpixel_offsets)
+    output_global_mem = cuda.device_array(subpixel_offsets.shape, dtype=np.int_)
+    gpu_patch[blockspergrid, threadsperblock](d_arr, output_global_mem)
+    output = output_global_mem.copy_to_host()
+
+    return output
+
 @timeit
 def throw_out_small_patches(gval_subpixels):
     laser_patch_img = np.copy(gval_subpixels)
@@ -220,8 +242,18 @@ SEGMENT_MAX_SPAN_TREE = 1
 @timeit
 def segment_laser_lines(img, segment_mode):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
-        return cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2, dst=np.array([]))
-        return cv.HoughLinesP(img, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
+        lines = cv.HoughLines(img, 1, np.pi / 180, threshold=10, srn=2, stn=2)
+        print(lines)
+        lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+        # merge lines
+        mergedlines = []
+        for line in lines:
+            start, end = line
+            for otherline in lines:
+                otherstart, otherend = otherline
+        return lines
+        
+        # return cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=10, minLineLength=100, maxLineGap=5)
     elif segment_mode == SEGMENT_MAX_SPAN_TREE:
         # Let 15 parallel lines be defined as 15 groups of indexes or labels k = {1, 2, . . . , 25}. Let
         # Pl = {p1, p2, . . . , pm} a group of pixels who share at least one corner. We define pa a
@@ -314,19 +346,6 @@ if __name__ == "__main__":
             imgs.append(np.asarray(img))
             cpimgs.append(cupy.asarray(img))
             filenames.append(filename)
-
-    # numpyrewardtimes = 0
-    # for img in imgs:
-    #     start_time = time.perf_counter()
-    #     color_weights = (0.08, 0.85, 0.2)
-    #     reward = np.sum(img * color_weights, axis=2)
-    #     end_time = time.perf_counter()
-    #     total_time = end_time - start_time
-    #     numpyrewardtimes += total_time
-    #     print(f'\nNumpy reward img took {total_time:.4f} seconds')
-
-    #     gvals = generate_candidate_laser_pt_img(reward)
-    #     goodgvals = threshold_gvals(gvals)
     
     cupyrewardtimes = 0
     for img in imgs:
@@ -339,15 +358,19 @@ if __name__ == "__main__":
         cupyrewardtimes += total_time
         print(f'Cupy reward img took {total_time:.4f} seconds')
         cv.imshow("rew", reward / np.max(reward))
+
         gvals = calculate_gaussian_integral_windows(reward)
         cv.imshow("gvals", gvals / np.max(gvals))
+
         subpxs = find_gval_subpixels(gvals, reward)
         a = subpxs.copy()
         a[subpxs != 0] = 1
         cv.imshow("subpxs", a)
+
         subpxsfiltered = throw_out_small_patches(subpxs)
         cv.imshow("subpxgfilt", subpxsfiltered)
         print(subpxsfiltered)
+
         laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
         print(f"there are {np.count_nonzero(subpxsfiltered)} subpxs")
         laserpxbinary[subpxsfiltered != 0] = 255
@@ -355,17 +378,8 @@ if __name__ == "__main__":
         print(f"thresholded {np.count_nonzero(laserpxbinary)} pixels")
         print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
         cv.imshow("bin", laserpxbinary)
-        # laserpxbinary = subpxsfiltered.copy()
-        # laserpxbinary[laserpxbinary > 0] = 1
-        # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
-        arr = np.array([])
-        lines = cv.HoughLines(laserpxbinary, 1, np.pi / 180, threshold=10, srn=2, stn=2)
-        print(lines)
-        print(arr)
-        lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=10, minLineLength=100, maxLineGap=5)
-        print(lines)
-        print(arr)
-        lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+
+        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
         dispimg = np.copy(img)
         print("\nLines: ")
         if lines is not None:
