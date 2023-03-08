@@ -2,6 +2,24 @@ import numpy as np
 import cv2 as cv
 import math
 
+DISP_COLORS = [ #BGR
+    (255,0,0), # royal blue
+    (0,255,0), # green
+    (0,0,255), # brick red
+    (255,255,0), # cyan
+    (255,0,255), # magenta
+    (0,255,255), # yellow
+    (255,255,255), # white
+    (180,0,0), # dark blue
+    (0,180,0), # forest green
+    (0,0,180), # crimson
+    (180,180,0), # turquoise
+    (180,0,180), # purple
+    (0,180,180), # wheat
+    (180,180,180), # gray
+    (255,180,100), # cerulean
+]
+
 # modifies in place and returns
 def calc_chessboard_corners(board_size, square_size):
     # type:(tuple[int, int], float) -> list[tuple[float, float, float]]
@@ -113,6 +131,67 @@ def get_polar_line(line, odom=[0.0, 0.0, 0.0]):
 
     # Return in the vehicle frame
     return np.array([np.abs(dist), angle_wrap(ang - odom[2])])
+
+def merge_polar_lines(lines, a_thresh, r_thresh, max_lines, debug=False):
+    groups = [[[],[]] for _ in range(max_lines)]
+    groupavgs = np.zeros((max_lines,2))
+    groupsmade = 0
+    threwout = 0
+
+    # throw out bad angles
+    # avg_angle = np.average(lines[:,1])
+    med_angle = np.median(lines[:,1])
+    newlines = []
+    for polarline in lines:
+        r, angle = polarline
+        if abs(angle - med_angle) < a_thresh:
+            newlines.append(polarline)
+    lines = np.array(newlines)
+
+    for polarline in lines:
+        r, a = polarline
+        goodgroup = -1
+        for idx, avg in enumerate(groupavgs):
+            r_avg, a_avg = avg
+            if abs(r-r_avg) < r_thresh: # the thetas will all likely be the same or very similar so we dont care to compare them
+                goodgroup = idx
+                break
+        if goodgroup == -1:
+            if groupsmade == max_lines:
+                threwout += 1
+                # find best fit? throw out? not sure, will just throw out for now
+                continue
+            else:
+                groups[groupsmade][0].append(r)
+                groups[groupsmade][1].append(a)
+                groupavgs[groupsmade,:] = polarline
+                groupsmade += 1
+        else:
+            groups[goodgroup][0].append(r)
+            groups[goodgroup][1].append(a)
+            r_avg = sum(groups[goodgroup][0]) / len(groups[goodgroup][0])
+            a_avg = sum(groups[goodgroup][1]) / len(groups[goodgroup][1])
+            groupavgs[goodgroup,:] = r_avg, a_avg
+    if debug:
+         print("Merge Polar Lines made %d groups and threw out %d lines" % (groupsmade, threwout))
+    return groupavgs
+
+def draw_polar_lines(img, lines):
+    for i in range(0, len(lines)):
+        try:
+            print("line %s" % lines[i])
+            rho = lines[i][0]
+            theta = lines[i][1]
+            a = math.cos(theta)
+            b = math.sin(theta)
+            x0 = a * rho
+            y0 = b * rho
+            pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+            pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
+            cv.line(img, pt1, pt2, DISP_COLORS[i % len(DISP_COLORS)], 3, cv.LINE_AA)
+        except:
+            print("bad line (maybe vertical) %s" % lines[i])
+    return img
 
 def segments_distance(x11, y11, x12, y12, x21, y21, x22, y22):
   """ distance between two segments in the plane:

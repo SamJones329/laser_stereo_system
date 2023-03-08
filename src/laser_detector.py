@@ -5,7 +5,7 @@ import time
 import numpy as np
 from numba import cuda # if cuda is not available, should set variable NUMBA_CUDA_SIM = 1 in terminal
 from PIL import Image
-from helpers import recurse_patch, maximumSpanningTree
+from helpers import recurse_patch, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
 import cv2 as cv
 import sys
 
@@ -28,7 +28,7 @@ NUM_LASER_LINES = 15
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
 GVAL_MIN_VAL = 1975.
 MERGE_HLP_LINE_DIST_THRESH = 20
-MERGE_HLP_LINES_ANG_THRESH = 5
+MERGE_HLP_LINES_ANG_THRESH = 3
 
 
 def timeit(func):
@@ -45,27 +45,6 @@ def timeit(func):
         print()
         return result
     return timeit_wrapper
-
-@timeit
-def generate_laser_reward_image(img, color_weights):
-    # type:(cp.ndarray, tuple[float,float,float]) -> cp.ndarray
-    '''Creates a greyscale image where each pixel's value represents the likely of the pixel being part of a laser.
-
-    :param img: (cv.Mat) MxNx3 RGB image, assumes Red-Green-Blue (RGB) color order
-    :param color_weights: (tuple[float,float,float]) Values to weight colors of 
-    pixels to detect laser lines, in the order (R,G,B). In the conversion to greyscale, 
-    determines how much of a color's value is added to the greyscale value. e.g. if 
-    (R,G,B)=(0.1, 0.5, 0.2), for a pixel with RGB(128,255,50), the resulting greyscale 
-    value would be 0.1 * 128 + 0.5 * 255 + 0.2 * 50 = 150.3 ≈ 150. These values are 
-    usually obtained by cross-referencing the color response charts of your camera to 
-    the wavelength of your laser light.
-
-    :return: MxN greyscale cv.Mat image or otherwise compatible arraylike
-    '''
-    # maybe force OpenCV to use integer images instead of floats to save memory?
-    return img * color_weights
-    # return img[:,:,0] * color_weights[0] + img[:,:,1] * color_weights[1] + img[:,:,2] * color_weights[2]
-
 
 @cuda.jit
 def gpu_gvals(img, out):
@@ -238,13 +217,15 @@ def throw_out_small_patches(gval_subpixels):
 
 
 SEGMENT_HOUGH_LINES_P = 0
-SEGMENT_MAX_SPAN_TREE = 1
+SEGMENT_HOUGH_LINES = 1
+SEGMENT_MAX_SPAN_TREE = 2
 @timeit
-def segment_laser_lines(img, segment_mode):
+def segment_laser_lines(img, segment_mode, orig):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
-        lines = cv.HoughLines(img, 1, np.pi / 180, threshold=10, srn=2, stn=2)
+        lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
         print(lines)
-        lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+        if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+        return lines
         # merge lines
         mergedlines = []
         for line in lines:
@@ -252,8 +233,24 @@ def segment_laser_lines(img, segment_mode):
             for otherline in lines:
                 otherstart, otherend = otherline
         return lines
-        
-        # return cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=10, minLineLength=100, maxLineGap=5)
+    elif segment_mode == SEGMENT_HOUGH_LINES:
+        lines = cv.HoughLines(img, 1, np.pi / 180, threshold=200, srn=2, stn=2) 
+        if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+
+        cv.imshow("ulines", draw_polar_lines(orig.copy(), lines))
+        mergedlines = merge_polar_lines(lines, MERGE_HLP_LINES_ANG_THRESH, MERGE_HLP_LINE_DIST_THRESH, NUM_LASER_LINES)
+
+        # make all line angles positive
+        for idx, line in enumerate(mergedlines):
+            r, th = line
+            if r < 0:
+                th = angle_wrap(th + math.pi)
+                r *= -1
+            mergedlines[idx,:] = r, th
+
+        # sort by radius increaseing
+        mergedlines = mergedlines[mergedlines[:, 0].argsort()] 
+        return mergedlines
     elif segment_mode == SEGMENT_MAX_SPAN_TREE:
         # Let 15 parallel lines be defined as 15 groups of indexes or labels k = {1, 2, . . . , 25}. Let
         # Pl = {p1, p2, . . . , pm} a group of pixels who share at least one corner. We define pa a
@@ -379,15 +376,21 @@ if __name__ == "__main__":
         print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
         cv.imshow("bin", laserpxbinary)
 
-        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
-        dispimg = np.copy(img)
-        print("\nLines: ")
-        if lines is not None:
-            lines = lines[lines[:, 0].argsort()] 
-            for i in range(0, len(lines)):
-                print("line %s" % lines[i])
-                cv.line(dispimg, lines[i,:2], lines[i,2:], (0,0,255), 3, cv.LINE_AA)
-        cv.imshow("lines", dispimg)
+        # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
+        # dispimg = np.copy(img)
+        # print("\nLines: ")
+        # if lines is not None:
+        #     lines = lines[lines[:, 0].argsort()] 
+        #     for i in range(0, len(lines)):
+        #         print("line %s" % lines[i])
+        #         cv.line(dispimg, lines[i,:2], lines[i,2:], (0,0,255), 3, cv.LINE_AA)
+        # cv.imshow("lines", dispimg)
+
+        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES, img.copy())
+        linesimg = img.copy()
+        draw_polar_lines(linesimg, lines)
+        cv.imshow("lines", linesimg)
+
         cv.waitKey(0)
     cv.destroyAllWindows()
 
