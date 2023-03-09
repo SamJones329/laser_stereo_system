@@ -348,7 +348,7 @@ if __name__ == "__main__":
     for img in imgs:
         cv.imshow("img", img)
         start_time = time.perf_counter()
-        color_weights = (0.08, 0.85, 0.2)
+        color_weights = (0.18, 0.85, 0.12)
         reward = cupy.sum(img * color_weights, axis=2) 
         end_time = time.perf_counter()
         total_time = end_time - start_time
