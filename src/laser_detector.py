@@ -212,17 +212,88 @@ def find_gval_subpixels(gvals, reward_img):
     return subpixel_offsets
 
 @cuda.jit
+def gpu_9_patch(img, minval, out):
+    outrow, outcol = cuda.grid(2) 
+    row, col = outrow * 3, outcol * 3
+    pxs = 0
+    if abs(img[row, col]) > minval:
+        pxs += 1
+    if abs(img[row-1, col]) > minval:
+        out[outrow, outcol, 1] = 1 # has px on top                                
+        pxs += 1
+    if abs(img[row+1, col]) > minval:
+        out[outrow, outcol, 2] = 1 # has px on bottom        
+        pxs += 1
+    if abs(img[row, col-1]) > minval:
+        out[outrow, outcol, 3] = 1 # has px on left                       
+        pxs += 1
+    if abs(img[row, col+1]) > minval:
+        out[outrow, outcol, 4] = 1 # has px on right                       
+        pxs += 1
+    if abs(img[row-1, col-1]) > minval:
+        out[outrow, outcol, 1] = 1 # has px on top                                
+        out[outrow, outcol, 3] = 1 # has px on left                       
+        pxs += 1
+    if abs(img[row-1, col+1]) > minval:
+        out[outrow, outcol, 1] = 1 # has px on top                                
+        out[outrow, outcol, 4] = 1 # has px on right                       
+        pxs += 1
+    if abs(img[row+1, col-1]) > minval:
+        out[outrow, outcol, 2] = 1 # has px on bottom                                       
+        out[outrow, outcol, 3] = 1 # has px on left                       
+        pxs += 1
+    if abs(img[row+1, col+1]) > minval:
+        out[outrow, outcol, 2] = 1 # has px on bottom                                       
+        out[outrow, outcol, 4] = 1 # has px on right                       
+        pxs += 1    
+    out[outrow, outcol, 0] = pxs                        
+
+@timeit
+def throw_out_small_patches_9_gpu(subpixel_offsets):
+    threadsperblock = (maxthreadsperblock2d // 2, maxthreadsperblock2d // 2)# (16,16) # thread dims multiplied must not exceed max threads per block
+    # we want each thread to have a 3x3 area to go over. we don't have 
+    # to worry about going all the way to the edge since there won't be 
+    # laser points there anyways and we are only throwing out max 6 rows and columns
+    blockspergrid_x = int(subpixel_offsets.shape[0] / 3 / threadsperblock[0])
+    blockspergrid_y = int(subpixel_offsets.shape[1] / 3 / threadsperblock[1])
+    blockspergrid = (blockspergrid_x, blockspergrid_y)
+
+    d_arr = cuda.to_device(subpixel_offsets)
+    output_global_mem = cuda.device_array((blockspergrid[0] * threadsperblock[0], blockspergrid[1] * threadsperblock[1], 5), dtype=np.float64)
+    gpu_patch[blockspergrid, threadsperblock](d_arr, sys.float_info.min, output_global_mem)
+    # return output_global_mem
+    output = output_global_mem.copy_to_host()
+
+    mergedpatches = []
+    for row in range(output.shape[0]):
+        for col in range(output.shape[1]):
+            pxs, hastop, hasbottom, hasleft, hasright = output[row,col]
+            if hastop:
+                pass
+
+    return output
+
+@cuda.jit
 def gpu_patch(img, minval, out):
     outrow, outcol = cuda.grid(2) 
     row, col = outrow * 7, outcol * 7
     pxs = 0
+    out[outrow, outcol] = [0,0,0,0,0]
     for i in range(-3,4): # [-3, -2, -1, 0, 2, 3]
         searchingrow = row + i
         for j in range(-3,4):
             searchingcol = col + j
             if abs(img[searchingrow, searchingcol]) > minval:
+                if i < 0: # top
+                    out[outrow, outcol, 1] = max(abs(i), out[outrow, outcol, 1])
+                else: # bottom
+                    out[outrow, outcol, 2] = max(abs(i), out[outrow, outcol, 2])
+                if j < 0: # left
+                    out[outrow, outcol, 3] = max(abs(j), out[outrow, outcol, 3])
+                else: # right
+                    out[outrow, outcol, 4] = max(abs(j), out[outrow, outcol, 4])
                 pxs += 1
-    out[outrow, outcol] = pxs                        
+    out[outrow, outcol, 0] = pxs                        
 
 @timeit
 def throw_out_small_patches_gpu(subpixel_offsets):
@@ -230,16 +301,23 @@ def throw_out_small_patches_gpu(subpixel_offsets):
     # we want each thread to have a 7x7 area to go over. we don't have 
     # to worry about going all the way to the edge since there won't be 
     # laser points there anyways and we are only throwing out max 6 rows and columns
-    blockspergrid_x = int(math.ceil(subpixel_offsets.shape[0] / 7 / threadsperblock[0]))
-    blockspergrid_y = int(math.ceil(subpixel_offsets.shape[1] / 7 / threadsperblock[1]))
+    blockspergrid_x = int(subpixel_offsets.shape[0] / 7 / threadsperblock[0])
+    blockspergrid_y = int(subpixel_offsets.shape[1] / 7 / threadsperblock[1])
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
     d_arr = cuda.to_device(subpixel_offsets)
-    output_global_mem = cuda.device_array(subpixel_offsets.shape, dtype=np.float64)
+    output_global_mem = cuda.device_array((blockspergrid[0] * threadsperblock[0], blockspergrid[1] * threadsperblock[1], 5), dtype=np.float64)
     gpu_patch[blockspergrid, threadsperblock](d_arr, sys.float_info.min, output_global_mem)
     # return output_global_mem
     output = output_global_mem.copy_to_host()
 
+    # merge
+    patches = []
+    for i in range(1,output.shape[0]-1):
+        for j in range(1,output.shape[1]-1):
+            # num pxs in this patch, range to connect to other patch px on top, bottom, left, and right
+            pxs, top, bottom, left, right = output[i, j]
+            # use similar algo to normal throw out small patches here
     return output
 
 @timeit
