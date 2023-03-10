@@ -30,7 +30,6 @@ GVAL_MIN_VAL = 1975.
 MERGE_HLP_LINE_DIST_THRESH = 20
 MERGE_HLP_LINES_ANG_THRESH = 3
 
-
 def timeit(func):
     @wraps(func)
     def timeit_wrapper(*args, **kwargs):
@@ -117,6 +116,58 @@ def calculate_gaussian_integral_windows(img):
 
     return output * -1 # i have no idea why they are negative but they should be positive so...
 
+@cuda.jit
+def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_center, output):
+    row, col = cuda.grid(2)
+    # center of window
+    center = row + offset_from_winstart_to_center
+    if not (0 < row < ln_reward.shape[0]-1 and 0 < col < ln_reward.shape[1]-1) or gvals[row,col] < minval: 
+        output[center, col] = 0.
+    else:    
+        # ln(f(x)), ln(f(x-1)), ln(f(x+1))
+        lnfx = ln_reward[center, col]
+        lnfxm = ln_reward[center-1, col]
+        lnfxp = ln_reward[center+1, col]
+        denom = lnfxm - 2 * lnfx + lnfxp
+        if denom == 0:
+            # # 5px Center of Mass (CoM5) detector
+            fx = reward_img[center, col] # f(x)
+            fxp = reward_img[center+1, col] # f(x+1)
+            fxm = reward_img[center-1, col] # f(x-1)
+            fxp2 = reward_img[center+2, col] # f(x+2)
+            fxm2 = reward_img[center-2, col] # f(x-2)
+            num = 2*fxp2 + fxp - fxm - 2*fxm2
+            denom = fxm2 + fxm + fx + fxp + fxp2
+            subpixel_offset = num / denom
+            subpixel_offset = -1
+        else:
+            numer = lnfxm - lnfxp
+            subpixel_offset = 0.5 * numer / denom
+        output[center, col] = subpixel_offset
+
+@timeit
+def find_gval_subpixels_gpu(gvals, reward_img):
+    if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
+    offset_from_winstart_to_center = WINLEN // 2
+
+    threadsperblock = (maxthreadsperblock2d, maxthreadsperblock2d)# (32,32) # thread dims multiplied must not exceed max threads per block
+    blockspergrid_x = int(math.ceil(gvals.shape[0] / threadsperblock[0]))
+    blockspergrid_y = int(math.ceil(gvals.shape[1] / threadsperblock[1]))
+    blockspergrid = (blockspergrid_x, blockspergrid_y)
+
+    with np.errstate(divide='ignore'):
+            ln_reward = np.log(reward_img)
+            ln_reward[ln_reward == np.nan] = 0
+            ln_reward[abs(ln_reward) == np.inf] = 0
+            d_ln_reward = cuda.to_device(ln_reward)
+    d_reward_img = cuda.to_device(reward)
+    d_gvals = cuda.to_device(gvals)
+    output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
+    find_subpixel[blockspergrid, threadsperblock](d_gvals, d_ln_reward, d_reward_img, GVAL_MIN_VAL, offset_from_winstart_to_center, output_global_mem)
+    output = output_global_mem.copy_to_host()
+
+    return output
+
 @timeit
 def find_gval_subpixels(gvals, reward_img):
     if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
@@ -153,20 +204,31 @@ def find_gval_subpixels(gvals, reward_img):
     return subpixel_offsets
 
 @cuda.jit
-def gpu_patch(img, patchdict, out):
-    row, col = cuda.grid(2)
-
+def gpu_patch(img, minval, out):
+    outrow, outcol = cuda.grid(2) 
+    row, col = outrow * 7, outcol * 7
+    pxs = 0
+    for i in range(-3,4): # [-3, -2, -1, 0, 2, 3]
+        searchingrow = row + i
+        for j in range(-3,4):
+            searchingcol = col + j
+            if abs(img[searchingrow, searchingcol]) > minval:
+                pxs += 1
+    out[outrow, outcol] = pxs                        
 
 @timeit
 def throw_out_small_patches_gpu(subpixel_offsets):
-    threadsperblock = (maxthreadsperblock2d, maxthreadsperblock2d)# (32,32) # thread dims multiplied must not exceed max threads per block
-    blockspergrid_x = int(math.ceil(subpixel_offsets.shape[0] / threadsperblock[0]))
-    blockspergrid_y = int(math.ceil(subpixel_offsets.shape[1] / threadsperblock[1]))
+    threadsperblock = (maxthreadsperblock2d // 2, maxthreadsperblock2d // 2)# (16,16) # thread dims multiplied must not exceed max threads per block
+    # we want each thread to have a 7x7 area to go over. we don't have 
+    # to worry about going all the way to the edge since there won't be 
+    # laser points there anyways and we are only throwing out max 6 rows and columns
+    blockspergrid_x = int(math.ceil(subpixel_offsets.shape[0] / 7 / threadsperblock[0]))
+    blockspergrid_y = int(math.ceil(subpixel_offsets.shape[1] / 7 / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
     d_arr = cuda.to_device(subpixel_offsets)
-    output_global_mem = cuda.device_array(subpixel_offsets.shape, dtype=np.int_)
-    gpu_patch[blockspergrid, threadsperblock](d_arr, output_global_mem)
+    output_global_mem = cuda.device_array(subpixel_offsets.shape, dtype=np.float64)
+    gpu_patch[blockspergrid, threadsperblock](d_arr, sys.float_info.min, output_global_mem)
     output = output_global_mem.copy_to_host()
 
     return output
@@ -359,12 +421,12 @@ if __name__ == "__main__":
         gvals = calculate_gaussian_integral_windows(reward)
         cv.imshow("gvals", gvals / np.max(gvals))
 
-        subpxs = find_gval_subpixels(gvals, reward)
+        subpxs = find_gval_subpixels_gpu(gvals, reward)
         a = subpxs.copy()
         a[subpxs != 0] = 1
         cv.imshow("subpxs", a)
 
-        subpxsfiltered = throw_out_small_patches(subpxs)
+        subpxsfiltered = throw_out_small_patches_gpu(subpxs)
         cv.imshow("subpxgfilt", subpxsfiltered)
         print(subpxsfiltered)
 
