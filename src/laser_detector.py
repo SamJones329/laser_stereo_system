@@ -82,7 +82,7 @@ def cpu_gvals(img):
             gvals.append((col, winstart+WINLEN//2, G))
     return gvals
 
-def calculate_gaussian_integral_windows(img):
+def calculate_gaussian_integral_windows(img) -> cuda.devicearray:
     '''Calculates discretized Gaussian integral over window 
     of size WINLEN. Takes in a mono laser intensity image. 
     The resulting values can be used with a tuned threshold 
@@ -102,7 +102,9 @@ def calculate_gaussian_integral_windows(img):
     d_img = cuda.to_device(img)
     output_global_mem = cuda.device_array(img.shape)
     gpu_gvals[blockspergrid, threadsperblock](d_img, output_global_mem)
-    output = output_global_mem.copy_to_host()
+    # output = output_global_mem.copy_to_host()
+    cupy.multiply(output_global_mem, -1)
+    # output_global_mem *= -1
     end_time = time.perf_counter()
     total_time = end_time - start_time
     # print(output)
@@ -114,7 +116,8 @@ def calculate_gaussian_integral_windows(img):
     # total_time = end_time - start_time
     # print(f'CPU gval gen took {total_time:.4f} seconds')    
 
-    return output * -1 # i have no idea why they are negative but they should be positive so...
+    return output_global_mem
+    # return output * -1 # i have no idea why they are negative but they should be positive so...
 
 @cuda.jit
 def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_center, output):
@@ -122,7 +125,8 @@ def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_
     # center of window
     center = row + offset_from_winstart_to_center
     if not (0 < row < ln_reward.shape[0]-1 and 0 < col < ln_reward.shape[1]-1) or gvals[row,col] < minval: 
-        output[center, col] = 0.
+        return
+        #output[center, col] = 0.
     else:    
         # ln(f(x)), ln(f(x-1)), ln(f(x+1))
         lnfx = ln_reward[center, col]
@@ -146,7 +150,7 @@ def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_
         output[center, col] = subpixel_offset
 
 @timeit
-def find_gval_subpixels_gpu(gvals, reward_img):
+def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray):
     if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
     offset_from_winstart_to_center = WINLEN // 2
 
@@ -156,14 +160,18 @@ def find_gval_subpixels_gpu(gvals, reward_img):
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
     with np.errstate(divide='ignore'):
-            ln_reward = np.log(reward_img)
-            ln_reward[ln_reward == np.nan] = 0
-            ln_reward[abs(ln_reward) == np.inf] = 0
-            d_ln_reward = cuda.to_device(ln_reward)
-    d_reward_img = cuda.to_device(reward)
-    d_gvals = cuda.to_device(gvals)
+            d_reward_img = cupy.array(reward_img)
+            d_ln_reward = cupy.log(d_reward_img)
+            d_ln_reward[d_ln_reward == cupy.nan] = 0
+            d_ln_reward[abs(d_ln_reward) == cupy.inf] = 0
+            # ln_reward = np.log(reward_img)
+            # ln_reward[ln_reward == np.nan] = 0
+            # ln_reward[abs(ln_reward) == np.inf] = 0
+            # d_ln_reward = cuda.to_device(ln_reward)
+    # d_reward_img = cuda.to_device(reward)
+    # d_gvals = cuda.to_device(gvals)
     output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
-    find_subpixel[blockspergrid, threadsperblock](d_gvals, d_ln_reward, d_reward_img, GVAL_MIN_VAL, offset_from_winstart_to_center, output_global_mem)
+    find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, GVAL_MIN_VAL, offset_from_winstart_to_center, output_global_mem)
     output = output_global_mem.copy_to_host()
 
     return output
@@ -229,6 +237,7 @@ def throw_out_small_patches_gpu(subpixel_offsets):
     d_arr = cuda.to_device(subpixel_offsets)
     output_global_mem = cuda.device_array(subpixel_offsets.shape, dtype=np.float64)
     gpu_patch[blockspergrid, threadsperblock](d_arr, sys.float_info.min, output_global_mem)
+    # return output_global_mem
     output = output_global_mem.copy_to_host()
 
     return output
@@ -408,7 +417,8 @@ if __name__ == "__main__":
     
     cupyrewardtimes = 0
     for img in imgs:
-        cv.imshow("img", img)
+        print(f"Img shape: {img.shape}")
+        # cv.imshow("img", img)
         start_time = time.perf_counter()
         color_weights = (0.18, 0.85, 0.12)
         reward = cupy.sum(img * color_weights, axis=2) 
@@ -416,44 +426,45 @@ if __name__ == "__main__":
         total_time = end_time - start_time
         cupyrewardtimes += total_time
         print(f'Cupy reward img took {total_time:.4f} seconds')
-        cv.imshow("rew", reward / np.max(reward))
+        # cv.imshow("rew", reward / np.max(reward))
 
         gvals = calculate_gaussian_integral_windows(reward)
-        cv.imshow("gvals", gvals / np.max(gvals))
+        # cv.imshow("gvals", gvals / np.max(gvals))
 
         subpxs = find_gval_subpixels_gpu(gvals, reward)
         a = subpxs.copy()
         a[subpxs != 0] = 1
-        cv.imshow("subpxs", a)
+        # cv.namedWindow("subpxs", cv.WINDOW_NORMAL)
+        # cv.imshow("subpxs", a)
 
         subpxsfiltered = throw_out_small_patches_gpu(subpxs)
-        cv.imshow("subpxgfilt", subpxsfiltered)
-        print(subpxsfiltered)
+        # cv.imshow("subpxgfilt", subpxsfiltered)
+        # print(subpxsfiltered)
 
-        laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
-        print(f"there are {np.count_nonzero(subpxsfiltered)} subpxs")
-        laserpxbinary[subpxsfiltered != 0] = 255
-        # retval, laserpxbinary = cv.threshold(subpxsfiltered, sys.float_info.min, 255, type=cv.THRESH_BINARY)#, dst=laserpxbinary)
-        print(f"thresholded {np.count_nonzero(laserpxbinary)} pixels")
-        print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
-        cv.imshow("bin", laserpxbinary)
+        # laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
+        # print(f"there are {np.count_nonzero(subpxsfiltered)} subpxs")
+        # laserpxbinary[subpxsfiltered != 0] = 255
+        # # retval, laserpxbinary = cv.threshold(subpxsfiltered, sys.float_info.min, 255, type=cv.THRESH_BINARY)#, dst=laserpxbinary)
+        # print(f"thresholded {np.count_nonzero(laserpxbinary)} pixels")
+        # print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
+        # cv.imshow("bin", laserpxbinary)
 
-        # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
-        # dispimg = np.copy(img)
-        # print("\nLines: ")
-        # if lines is not None:
-        #     lines = lines[lines[:, 0].argsort()] 
-        #     for i in range(0, len(lines)):
-        #         print("line %s" % lines[i])
-        #         cv.line(dispimg, lines[i,:2], lines[i,2:], (0,0,255), 3, cv.LINE_AA)
-        # cv.imshow("lines", dispimg)
+        # # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
+        # # dispimg = np.copy(img)
+        # # print("\nLines: ")
+        # # if lines is not None:
+        # #     lines = lines[lines[:, 0].argsort()] 
+        # #     for i in range(0, len(lines)):
+        # #         print("line %s" % lines[i])
+        # #         cv.line(dispimg, lines[i,:2], lines[i,2:], (0,0,255), 3, cv.LINE_AA)
+        # # cv.imshow("lines", dispimg)
 
-        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES, img.copy())
-        linesimg = img.copy()
-        draw_polar_lines(linesimg, lines)
-        cv.imshow("lines", linesimg)
+        # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES, img.copy())
+        # linesimg = img.copy()
+        # draw_polar_lines(linesimg, lines)
+        # cv.imshow("lines", linesimg)
 
-        cv.waitKey(0)
+        # cv.waitKey(0)
     cv.destroyAllWindows()
 
     
