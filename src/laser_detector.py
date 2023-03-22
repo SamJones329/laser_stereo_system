@@ -19,7 +19,7 @@ class LaserDetectorStep(Enum):
     BIN = 6
     SEGMENT = 7
 
-IMG_DISPLAYS = []#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
+IMG_DISPLAYS = [LaserDetectorStep.ORIG]#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
 TIMED_STEPS = []
 DEBUG_MODE = True
 
@@ -36,9 +36,11 @@ except:
     maxthreadsperblock2d = math.floor(math.sqrt(1024))
 
 # Constants, should move these to param yaml file if gonna use with ROS
-NUM_LASER_LINES = 15
+DEFAULT_COLOR_WEIGHTS = (0.12, 0.85, 0.18)
+DEFAULT_GVAL_MIN_VAL = 2010.
+DEFAULT_ROI = ((0.1, 0.25), (0.9, 0.75)) # region of interest defined as (tl, tr) where tl and tr as defined by (height%, width%)
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
-GVAL_MIN_VAL = 2010.
+NUM_LASER_LINES = 15
 MERGE_HLP_LINE_DIST_THRESH = 20
 MERGE_HLP_LINES_ANG_THRESH = 3
 
@@ -62,7 +64,7 @@ def timeitstep(step: LaserDetectorStep):
     return timeit
 
 @timeitstep(LaserDetectorStep.REWARD)
-def reward_img(img, weights):
+def reward_img(img, weights=DEFAULT_COLOR_WEIGHTS):
     return cupy.sum(img * weights, axis=2)
 
 @cuda.jit
@@ -126,7 +128,7 @@ def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_
         output[center, col] = subpixel_offset
 
 @timeitstep(LaserDetectorStep.SUBPX)
-def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray):
+def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray, min_gval=DEFAULT_GVAL_MIN_VAL):
     if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
     offset_from_winstart_to_center = WINLEN // 2
 
@@ -141,7 +143,7 @@ def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray):
             d_ln_reward[d_ln_reward == cupy.nan] = 0
             d_ln_reward[abs(d_ln_reward) == cupy.inf] = 0
     output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
-    find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, GVAL_MIN_VAL, offset_from_winstart_to_center, output_global_mem)
+    find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, min_gval, offset_from_winstart_to_center, output_global_mem)
     output = output_global_mem.copy_to_host()
 
     return output
@@ -391,7 +393,6 @@ def segment_laser_lines(img, segment_mode):
 
 
 def imagept_laserplane_assoc(img, planes):
-    # type:(cp.ndarray, list[tuple(float, float, float)]) -> list[list[tuple(float,float,float)]]
     '''
     Associates each laser points in the image with one of the provided laser planes or throws it out.
 
@@ -465,14 +466,18 @@ if __name__ == "__main__":
         if DEBUG_MODE:
             start_time = time.perf_counter()
 
+        rowmin = int(DEFAULT_ROI[0][0] * img.shape[0])
+        rowmax = int(DEFAULT_ROI[1][0] * img.shape[0])+1
+        colmin = int(DEFAULT_ROI[0][1] * img.shape[1])
+        colmax = int(DEFAULT_ROI[1][1] * img.shape[1])+1
+        roi_img = img[rowmin:rowmax,colmin:colmax]
         if LaserDetectorStep.ORIG in IMG_DISPLAYS:
             print(f"Img shape: {img.shape}")
             origwin = f"Img{count}"
             cv.namedWindow(origwin, cv.WINDOW_NORMAL)
             cv.imshow(origwin, img)
 
-        color_weights = (0.12, 0.85, 0.18)
-        reward = reward_img(img, color_weights)
+        reward = reward_img(img)
         if LaserDetectorStep.REWARD in IMG_DISPLAYS:
             rewwin = f"rew{count}"
             cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
