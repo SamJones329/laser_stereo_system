@@ -19,7 +19,7 @@ def normalize(img):
 
 def calc(img):
     global gval_thresh
-    gvals = calculate_gaussian_integral_windows(reward(img))
+    gvals = calculate_gaussian_integral_windows(reward(img)).copy_to_host()
     print(f"Gvals:\n\tavg: {np.average(gvals)}\
           \n\tmin: {np.min(gvals)}\
           \n\tmax: {np.max(gvals)}\

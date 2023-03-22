@@ -26,7 +26,7 @@ except:
 # Constants, should move these to param yaml file if gonna use with ROS
 NUM_LASER_LINES = 15
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
-GVAL_MIN_VAL = 1975.
+GVAL_MIN_VAL = 2010.
 MERGE_HLP_LINE_DIST_THRESH = 20
 MERGE_HLP_LINES_ANG_THRESH = 3
 
@@ -53,6 +53,7 @@ def gpu_gvals(img, out):
         G = 0
         for row in range(winstartrow, winstartrow+WINLEN):
             G += (1 - 2*abs(winstartrow - row + (WINLEN - 1) / 2)) * img[row, winstartcol] #idk if this last part is right
+        G *= -1 # TODO figure out why have to do this
         out[winstartrow,winstartcol] = G
 
 # @timeit
@@ -79,6 +80,7 @@ def cpu_gvals(img):
             G = 0
             for row in range(winstart, winstart+WINLEN):
                 G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * img[row,col] #idk if this last part is right
+            G *= -1 # TODO figure out why have to do this
             gvals.append((col, winstart+WINLEN//2, G))
     return gvals
 
@@ -103,7 +105,6 @@ def calculate_gaussian_integral_windows(img) -> cuda.devicearray:
     output_global_mem = cuda.device_array(img.shape)
     gpu_gvals[blockspergrid, threadsperblock](d_img, output_global_mem)
     # output = output_global_mem.copy_to_host()
-    cupy.multiply(output_global_mem, -1)
     # output_global_mem *= -1
     end_time = time.perf_counter()
     total_time = end_time - start_time
@@ -278,7 +279,11 @@ def gpu_patch(img, minval, out):
     outrow, outcol = cuda.grid(2) 
     row, col = outrow * 7, outcol * 7
     pxs = 0
-    out[outrow, outcol] = [0,0,0,0,0]
+    out[outrow, outcol, 0] = 0
+    out[outrow, outcol, 1] = 0 # top
+    out[outrow, outcol, 2] = 0 # bottom
+    out[outrow, outcol, 3] = 0 # left
+    out[outrow, outcol, 4] = 0 # right
     for i in range(-3,4): # [-3, -2, -1, 0, 2, 3]
         searchingrow = row + i
         for j in range(-3,4):
@@ -312,13 +317,70 @@ def throw_out_small_patches_gpu(subpixel_offsets):
     output = output_global_mem.copy_to_host()
 
     # merge
-    patches = []
+    badpatches = []
     for i in range(1,output.shape[0]-1):
         for j in range(1,output.shape[1]-1):
             # num pxs in this patch, range to connect to other patch px on top, bottom, left, and right
             pxs, top, bottom, left, right = output[i, j]
             # use similar algo to normal throw out small patches here
-    return output
+            if pxs == 0: continue
+
+            patch = []
+            patchpxs = output[i,j,0]
+            output[i,j,0] = 0
+            toexplore = [(i,j)]
+
+            canexplore = lambda i_x, j_x : 0 <= i_x < output.shape[0] and 0 <= j_x < output.shape[1] and output[i_x,j_x,0] > 0
+
+            while toexplore:
+                block = toexplore.pop(0)
+                patch.append(block)
+                explorerow, explorecol = block
+                exploretop = output[explorerow, explorecol, 1]
+                explorebottom = output[explorerow, explorecol, 2]
+                exploreleft = output[explorerow, explorecol, 3]
+                exploreright = output[explorerow, explorecol, 4]
+                
+                # top
+                row_neighbor, col_neighbor = explorerow-1, explorecol
+                if canexplore(row_neighbor, col_neighbor) and exploretop + output[row_neighbor, col_neighbor, 2] >= 3:
+                    patchpxs += output[row_neighbor, col_neighbor, 0]
+                    output[row_neighbor, col_neighbor] = 0
+                    toexplore.append((row_neighbor, col_neighbor))
+                
+                # bottom
+                row_neighbor, col_neighbor = explorerow+1, explorecol
+                if canexplore(row_neighbor, col_neighbor) and explorebottom + output[row_neighbor, col_neighbor, 1] >= 3:
+                    patchpxs += output[row_neighbor, col_neighbor, 0]
+                    output[row_neighbor, col_neighbor] = 0
+                    toexplore.append((row_neighbor, col_neighbor))
+                
+                # left
+                row_neighbor, col_neighbor = explorerow, explorecol-1
+                if canexplore(row_neighbor, col_neighbor) and exploreleft + output[row_neighbor, col_neighbor, 4] >= 3:
+                    patchpxs += output[row_neighbor, col_neighbor, 0]
+                    output[row_neighbor, col_neighbor] = 0
+                    toexplore.append((row_neighbor, col_neighbor))
+                
+                # right
+                row_neighbor, col_neighbor = explorerow, explorecol+1
+                if canexplore(row_neighbor, col_neighbor) and exploreright + output[row_neighbor, col_neighbor, 3] >= 3:
+                    patchpxs += output[row_neighbor, col_neighbor, 0]
+                    output[row_neighbor, col_neighbor] = 0
+                    toexplore.append((row_neighbor, col_neighbor))
+
+            if patchpxs < 5: badpatches.append(patch)
+    
+    filteredoffsets = subpixel_offsets.copy()
+    for patch in badpatches:
+        for block in patch:
+            blockrow, blockcol = block[0] * 7, block[1] * 7
+            for i in range(-3,4):
+                for j in range(-3,4):
+                    row, col = blockrow + i, blockcol + j
+                    filteredoffsets[row,col] = 0
+
+    return filteredoffsets
 
 @timeit
 def throw_out_small_patches(gval_subpixels):
@@ -494,29 +556,39 @@ if __name__ == "__main__":
             filenames.append(filename)
     
     cupyrewardtimes = 0
+    count = 0
     for img in imgs:
         print(f"Img shape: {img.shape}")
         # cv.imshow("img", img)
         start_time = time.perf_counter()
-        color_weights = (0.18, 0.85, 0.12)
+        color_weights = (0.12, 0.85, 0.18)
         reward = cupy.sum(img * color_weights, axis=2) 
         end_time = time.perf_counter()
         total_time = end_time - start_time
         cupyrewardtimes += total_time
         print(f'Cupy reward img took {total_time:.4f} seconds')
-        # cv.imshow("rew", reward / np.max(reward))
+        rewwin = f"rew{count}"
+        cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
+        cv.imshow(rewwin, reward / np.max(reward))
 
         gvals = calculate_gaussian_integral_windows(reward)
-        # cv.imshow("gvals", gvals / np.max(gvals))
+        gvalwin = f"gvals{count}"
+        cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
+        hostgvals = gvals.copy_to_host()
+        cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
 
         subpxs = find_gval_subpixels_gpu(gvals, reward)
         a = subpxs.copy()
         a[subpxs != 0] = 1
-        # cv.namedWindow("subpxs", cv.WINDOW_NORMAL)
-        # cv.imshow("subpxs", a)
+        print(f"{np.count_nonzero(a)} subpxs")
+        subpxwin = f"subpxs {count}"
+        cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
+        cv.imshow(subpxwin, a)
 
         subpxsfiltered = throw_out_small_patches_gpu(subpxs)
-        # cv.imshow("subpxgfilt", subpxsfiltered)
+        filtwin = f"subpxgfilt {count}"
+        cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
+        cv.imshow(filtwin, subpxsfiltered)
         # print(subpxsfiltered)
 
         # laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
@@ -543,6 +615,8 @@ if __name__ == "__main__":
         # cv.imshow("lines", linesimg)
 
         # cv.waitKey(0)
+        count += 1
+    cv.waitKey(0)
     cv.destroyAllWindows()
 
     
