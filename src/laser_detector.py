@@ -1,3 +1,4 @@
+from enum import Enum
 from functools import wraps
 import math
 import os
@@ -9,6 +10,17 @@ from helpers import recurse_patch, maximumSpanningTree, angle_wrap, merge_polar_
 import cv2 as cv
 import sys
 
+class LaserDetectorStep(Enum):
+    ORIG = 1
+    REWARD = 2
+    GVAL = 3
+    SUBPX = 4
+    FILTER = 5
+    BIN = 6
+    SEGMENT = 7
+
+IMG_DISPLAYS = []#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
+TIMED_STEPS = []
 DEBUG_MODE = True
 
 # if cupy not available (i.e. system w/out nvidia GPU), use numpy
@@ -45,6 +57,14 @@ def timeit(func):
         return result
     return timeit_wrapper
 
+def timeitstep(step: LaserDetectorStep):
+    if step not in TIMED_STEPS: return lambda x : x
+    return timeit
+
+@timeitstep(LaserDetectorStep.REWARD)
+def reward_img(img, weights):
+    return cupy.sum(img * weights, axis=2)
+
 @cuda.jit
 def gpu_gvals(img, out):
     winstartrow, winstartcol = cuda.grid(2)
@@ -56,69 +76,25 @@ def gpu_gvals(img, out):
         G *= -1 # TODO figure out why have to do this
         out[winstartrow,winstartcol] = G
 
-# @timeit
-# @nb.jit
-# def cpu_mt_gvals(img):
-#     rows = img.shape[0]
-#     cols = img.shape[1]
-#     gvals = []
-#     for col in prange(cols):
-#         for winstart in prange(rows-WINLEN):
-#             G = 0
-#             for row in prange(winstart, winstart+WINLEN):
-#                 G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * img[row,col] #idk if this last part is right
-#             gvals.append((col, winstart+WINLEN//2, G))
-#     return gvals
-
-@timeit
-def cpu_gvals(img):
-    rows = img.shape[0]
-    cols = img.shape[1]
-    gvals = []
-    for col in range(cols):
-        for winstart in range(rows-WINLEN):
-            G = 0
-            for row in range(winstart, winstart+WINLEN):
-                G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * img[row,col] #idk if this last part is right
-            G *= -1 # TODO figure out why have to do this
-            gvals.append((col, winstart+WINLEN//2, G))
-    return gvals
-
+@timeitstep(LaserDetectorStep.GVAL)
 def calculate_gaussian_integral_windows(img) -> cuda.devicearray:
     '''Calculates discretized Gaussian integral over window 
     of size WINLEN. Takes in a mono laser intensity image. 
     The resulting values can be used with a tuned threshold 
     value to be considered as laser points in an image.
     ''' 
-
     #memoization?
         
     threadsperblock = (maxthreadsperblock2d, maxthreadsperblock2d)# (32,32) # thread dims multiplied must not exceed max threads per block
     blockspergrid_x = int(math.ceil(img.shape[0] / threadsperblock[0]))
     blockspergrid_y = int(math.ceil(img.shape[1] / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
-    # print(f"\nBlockDimX = {blockspergrid[0]} \nBlockDimY = {blockspergrid[1]} \nthreadsPerBlock = {threadsperblock}\n")
-    # print(f"Image shape: {img.shape}\n")
 
-    start_time = time.perf_counter()
     d_img = cuda.to_device(img)
     output_global_mem = cuda.device_array(img.shape)
     gpu_gvals[blockspergrid, threadsperblock](d_img, output_global_mem)
-    # output = output_global_mem.copy_to_host()
-    # output_global_mem *= -1
-    end_time = time.perf_counter()
-    total_time = end_time - start_time
-    # print(output)
-    print(f'\nGPU gval gen took {total_time:.4f} seconds')
-
-    # start_time = time.perf_counter()
-    # cpu_gvals(img)
-    # end_time = time.perf_counter()
-    # total_time = end_time - start_time
-    # print(f'CPU gval gen took {total_time:.4f} seconds')    
 
     return output_global_mem
-    # return output * -1 # i have no idea why they are negative but they should be positive so...
 
 @cuda.jit
 def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_center, output):
@@ -127,7 +103,6 @@ def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_
     center = row + offset_from_winstart_to_center
     if not (0 < row < ln_reward.shape[0]-1 and 0 < col < ln_reward.shape[1]-1) or gvals[row,col] < minval: 
         return
-        #output[center, col] = 0.
     else:    
         # ln(f(x)), ln(f(x-1)), ln(f(x+1))
         lnfx = ln_reward[center, col]
@@ -150,7 +125,7 @@ def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_
             subpixel_offset = 0.5 * numer / denom
         output[center, col] = subpixel_offset
 
-@timeit
+@timeitstep(LaserDetectorStep.SUBPX)
 def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray):
     if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
     offset_from_winstart_to_center = WINLEN // 2
@@ -165,19 +140,13 @@ def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray):
             d_ln_reward = cupy.log(d_reward_img)
             d_ln_reward[d_ln_reward == cupy.nan] = 0
             d_ln_reward[abs(d_ln_reward) == cupy.inf] = 0
-            # ln_reward = np.log(reward_img)
-            # ln_reward[ln_reward == np.nan] = 0
-            # ln_reward[abs(ln_reward) == np.inf] = 0
-            # d_ln_reward = cuda.to_device(ln_reward)
-    # d_reward_img = cuda.to_device(reward)
-    # d_gvals = cuda.to_device(gvals)
     output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
     find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, GVAL_MIN_VAL, offset_from_winstart_to_center, output_global_mem)
     output = output_global_mem.copy_to_host()
 
     return output
 
-@timeit
+@timeitstep(LaserDetectorStep.SUBPX)
 def find_gval_subpixels(gvals, reward_img):
     if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
     subpixel_offsets = np.zeros(gvals.shape)
@@ -213,68 +182,6 @@ def find_gval_subpixels(gvals, reward_img):
     return subpixel_offsets
 
 @cuda.jit
-def gpu_9_patch(img, minval, out):
-    outrow, outcol = cuda.grid(2) 
-    row, col = outrow * 3, outcol * 3
-    pxs = 0
-    if abs(img[row, col]) > minval:
-        pxs += 1
-    if abs(img[row-1, col]) > minval:
-        out[outrow, outcol, 1] = 1 # has px on top                                
-        pxs += 1
-    if abs(img[row+1, col]) > minval:
-        out[outrow, outcol, 2] = 1 # has px on bottom        
-        pxs += 1
-    if abs(img[row, col-1]) > minval:
-        out[outrow, outcol, 3] = 1 # has px on left                       
-        pxs += 1
-    if abs(img[row, col+1]) > minval:
-        out[outrow, outcol, 4] = 1 # has px on right                       
-        pxs += 1
-    if abs(img[row-1, col-1]) > minval:
-        out[outrow, outcol, 1] = 1 # has px on top                                
-        out[outrow, outcol, 3] = 1 # has px on left                       
-        pxs += 1
-    if abs(img[row-1, col+1]) > minval:
-        out[outrow, outcol, 1] = 1 # has px on top                                
-        out[outrow, outcol, 4] = 1 # has px on right                       
-        pxs += 1
-    if abs(img[row+1, col-1]) > minval:
-        out[outrow, outcol, 2] = 1 # has px on bottom                                       
-        out[outrow, outcol, 3] = 1 # has px on left                       
-        pxs += 1
-    if abs(img[row+1, col+1]) > minval:
-        out[outrow, outcol, 2] = 1 # has px on bottom                                       
-        out[outrow, outcol, 4] = 1 # has px on right                       
-        pxs += 1    
-    out[outrow, outcol, 0] = pxs                        
-
-@timeit
-def throw_out_small_patches_9_gpu(subpixel_offsets):
-    threadsperblock = (maxthreadsperblock2d // 2, maxthreadsperblock2d // 2)# (16,16) # thread dims multiplied must not exceed max threads per block
-    # we want each thread to have a 3x3 area to go over. we don't have 
-    # to worry about going all the way to the edge since there won't be 
-    # laser points there anyways and we are only throwing out max 6 rows and columns
-    blockspergrid_x = int(subpixel_offsets.shape[0] / 3 / threadsperblock[0])
-    blockspergrid_y = int(subpixel_offsets.shape[1] / 3 / threadsperblock[1])
-    blockspergrid = (blockspergrid_x, blockspergrid_y)
-
-    d_arr = cuda.to_device(subpixel_offsets)
-    output_global_mem = cuda.device_array((blockspergrid[0] * threadsperblock[0], blockspergrid[1] * threadsperblock[1], 5), dtype=np.float64)
-    gpu_patch[blockspergrid, threadsperblock](d_arr, sys.float_info.min, output_global_mem)
-    # return output_global_mem
-    output = output_global_mem.copy_to_host()
-
-    mergedpatches = []
-    for row in range(output.shape[0]):
-        for col in range(output.shape[1]):
-            pxs, hastop, hasbottom, hasleft, hasright = output[row,col]
-            if hastop:
-                pass
-
-    return output
-
-@cuda.jit
 def gpu_patch(img, minval, out):
     outrow, outcol = cuda.grid(2) 
     row, col = outrow * 7, outcol * 7
@@ -300,7 +207,7 @@ def gpu_patch(img, minval, out):
                 pxs += 1
     out[outrow, outcol, 0] = pxs                        
 
-@timeit
+@timeitstep(LaserDetectorStep.FILTER)
 def throw_out_small_patches_gpu(subpixel_offsets):
     threadsperblock = (maxthreadsperblock2d // 2, maxthreadsperblock2d // 2)# (16,16) # thread dims multiplied must not exceed max threads per block
     # we want each thread to have a 7x7 area to go over. we don't have 
@@ -382,7 +289,7 @@ def throw_out_small_patches_gpu(subpixel_offsets):
 
     return filteredoffsets
 
-@timeit
+@timeitstep(LaserDetectorStep.FILTER)
 def throw_out_small_patches(gval_subpixels):
     laser_patch_img = np.copy(gval_subpixels)
     patches = []
@@ -395,10 +302,6 @@ def throw_out_small_patches(gval_subpixels):
             val = laser_patch_img[row,col]
             if abs(val) > sys.float_info.min: # found laser px, look for patch
                 if DEBUG_MODE: patches_explored += 1
-                # patch = [(row,col)]
-                # laser_patch_img[row,col] = 0.
-                # recurse_patch(row, col, patch, laser_patch_img, False)
-                # patch_lengths.append(len(patch))
 
                 patch = []
                 toexplore = [(row,col)]
@@ -430,8 +333,8 @@ def throw_out_small_patches(gval_subpixels):
 SEGMENT_HOUGH_LINES_P = 0
 SEGMENT_HOUGH_LINES = 1
 SEGMENT_MAX_SPAN_TREE = 2
-@timeit
-def segment_laser_lines(img, segment_mode, orig):
+@timeitstep(LaserDetectorStep.SEGMENT)
+def segment_laser_lines(img, segment_mode):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
         lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
         print(lines)
@@ -448,7 +351,7 @@ def segment_laser_lines(img, segment_mode, orig):
         lines = cv.HoughLines(img, 1, np.pi / 180, threshold=200, srn=2, stn=2) 
         if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
 
-        cv.imshow("ulines", draw_polar_lines(orig.copy(), lines))
+        # cv.imshow("ulines", draw_polar_lines(orig.copy(), lines))
         mergedlines = merge_polar_lines(lines, MERGE_HLP_LINES_ANG_THRESH, MERGE_HLP_LINE_DIST_THRESH, NUM_LASER_LINES)
 
         # make all line angles positive
@@ -555,73 +458,77 @@ if __name__ == "__main__":
             cpimgs.append(cupy.asarray(img))
             filenames.append(filename)
     
-    cupyrewardtimes = 0
+    imgproctimes = 0
     count = 0
     for img in imgs:
-        print(f"Img shape: {img.shape}")
-        # cv.imshow("img", img)
-        start_time = time.perf_counter()
+
+        if DEBUG_MODE:
+            start_time = time.perf_counter()
+
+        if LaserDetectorStep.ORIG in IMG_DISPLAYS:
+            print(f"Img shape: {img.shape}")
+            origwin = f"Img{count}"
+            cv.namedWindow(origwin, cv.WINDOW_NORMAL)
+            cv.imshow(origwin, img)
+
         color_weights = (0.12, 0.85, 0.18)
-        reward = cupy.sum(img * color_weights, axis=2) 
-        end_time = time.perf_counter()
-        total_time = end_time - start_time
-        cupyrewardtimes += total_time
-        print(f'Cupy reward img took {total_time:.4f} seconds')
-        rewwin = f"rew{count}"
-        cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
-        cv.imshow(rewwin, reward / np.max(reward))
+        reward = reward_img(img, color_weights)
+        if LaserDetectorStep.REWARD in IMG_DISPLAYS:
+            rewwin = f"rew{count}"
+            cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
+            cv.imshow(rewwin, reward / np.max(reward))
 
         gvals = calculate_gaussian_integral_windows(reward)
-        gvalwin = f"gvals{count}"
-        cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
-        hostgvals = gvals.copy_to_host()
-        cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
+        if LaserDetectorStep.GVAL in IMG_DISPLAYS:
+            gvalwin = f"gvals{count}"
+            cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
+            hostgvals = gvals.copy_to_host()
+            cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
 
         subpxs = find_gval_subpixels_gpu(gvals, reward)
-        a = subpxs.copy()
-        a[subpxs != 0] = 1
-        print(f"{np.count_nonzero(a)} subpxs")
-        subpxwin = f"subpxs {count}"
-        cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
-        cv.imshow(subpxwin, a)
+        if LaserDetectorStep.SUBPX in IMG_DISPLAYS:
+            a = subpxs.copy()
+            a[subpxs != 0] = 1
+            print(f"{np.count_nonzero(a)} subpxs")
+            subpxwin = f"subpxs {count}"
+            cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
+            cv.imshow(subpxwin, a)
 
         subpxsfiltered = throw_out_small_patches_gpu(subpxs)
-        filtwin = f"subpxgfilt {count}"
-        cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
-        cv.imshow(filtwin, subpxsfiltered)
-        # print(subpxsfiltered)
+        if LaserDetectorStep.FILTER in IMG_DISPLAYS:
+            filtwin = f"subpxgfilt {count}"
+            cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
+            cv.imshow(filtwin, subpxsfiltered)
 
-        # laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
-        # print(f"there are {np.count_nonzero(subpxsfiltered)} subpxs")
-        # laserpxbinary[subpxsfiltered != 0] = 255
-        # # retval, laserpxbinary = cv.threshold(subpxsfiltered, sys.float_info.min, 255, type=cv.THRESH_BINARY)#, dst=laserpxbinary)
-        # print(f"thresholded {np.count_nonzero(laserpxbinary)} pixels")
-        # print(f"laserpxbinary {type(laserpxbinary)} {laserpxbinary}")
-        # cv.imshow("bin", laserpxbinary)
+        laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
+        laserpxbinary[subpxsfiltered != 0] = 255
+        if LaserDetectorStep.BIN in IMG_DISPLAYS:
+            binwin = f"bin{count}"
+            cv.namedWindow(binwin, cv.WINDOW_NORMAL)
+            cv.imshow(binwin, laserpxbinary)
 
-        # # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES_P)
-        # # dispimg = np.copy(img)
-        # # print("\nLines: ")
-        # # if lines is not None:
-        # #     lines = lines[lines[:, 0].argsort()] 
-        # #     for i in range(0, len(lines)):
-        # #         print("line %s" % lines[i])
-        # #         cv.line(dispimg, lines[i,:2], lines[i,2:], (0,0,255), 3, cv.LINE_AA)
-        # # cv.imshow("lines", dispimg)
+        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES)
+        if LaserDetectorStep.SEGMENT in IMG_DISPLAYS:
+            dispimg = np.copy(img)
+            print("\nLines: ")
+            if lines is not None:
+                lines = lines[lines[:, 0].argsort()] 
+                draw_polar_lines(dispimg, lines)
+            
+            lineswin = f"lines{count}"
+            cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
+            cv.imshow(lineswin, dispimg)
+        
+        if DEBUG_MODE:
+            end_time = time.perf_counter()
+            total_time = end_time - start_time
+            imgproctimes += total_time
+            printStr = f'Image pipeline took {total_time:.4f} seconds'
 
-        # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES, img.copy())
-        # linesimg = img.copy()
-        # draw_polar_lines(linesimg, lines)
-        # cv.imshow("lines", linesimg)
-
-        # cv.waitKey(0)
         count += 1
+    
+    imgproctimes /= len(imgs)
+    print(f"Average image processing time of {imgproctimes:.4f} seconds or {1 / imgproctimes:.4f} images per second achieved. ")
+
     cv.waitKey(0)
     cv.destroyAllWindows()
-
-    
-    # print(f'\nNumpy reward img avg = {numpyrewardtimes/len(imgs):.4f} seconds')
-    print(f'\nCupy reward img avg = {cupyrewardtimes/len(imgs):.4f} seconds')
-
-    
-
