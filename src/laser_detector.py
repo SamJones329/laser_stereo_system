@@ -10,6 +10,13 @@ from helpers import recurse_patch, maximumSpanningTree, angle_wrap, merge_polar_
 import cv2 as cv
 import sys
 
+# TODO: fix
+P_HD2K = np.array([
+    [703.9299926757812, 0.0, 541.625], 
+    [0.0, 703.5599975585938, 311.8370056152344], 
+    [0.0, 0.0, 1.0]
+])
+
 class LaserDetectorStep(Enum):
     ORIG = 1
     REWARD = 2
@@ -19,7 +26,7 @@ class LaserDetectorStep(Enum):
     BIN = 6
     SEGMENT = 7
 
-IMG_DISPLAYS = [LaserDetectorStep.ORIG]#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
+IMG_DISPLAYS = []#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
 TIMED_STEPS = []
 DEBUG_MODE = True
 
@@ -226,7 +233,8 @@ def throw_out_small_patches_gpu(subpixel_offsets):
     output = output_global_mem.copy_to_host()
 
     # merge
-    badpatches = []
+    goodblockpatches = []
+    badblockpatches = []
     for i in range(1,output.shape[0]-1):
         for j in range(1,output.shape[1]-1):
             # num pxs in this patch, range to connect to other patch px on top, bottom, left, and right
@@ -278,18 +286,28 @@ def throw_out_small_patches_gpu(subpixel_offsets):
                     output[row_neighbor, col_neighbor] = 0
                     toexplore.append((row_neighbor, col_neighbor))
 
-            if patchpxs < 5: badpatches.append(patch)
+            if patchpxs < 5: badblockpatches.append(patch)
+            else: goodblockpatches.append(patch)
     
     filteredoffsets = subpixel_offsets.copy()
-    for patch in badpatches:
-        for block in patch:
+    for blockpatch in badblockpatches:
+        for block in blockpatch:
             blockrow, blockcol = block[0] * 7, block[1] * 7
             for i in range(-3,4):
                 for j in range(-3,4):
                     row, col = blockrow + i, blockcol + j
                     filteredoffsets[row,col] = 0
+    goodpatches = []
+    for blockpatch in goodblockpatches:
+        patch = []
+        for block in blockpatch:
+            blockrow, blockcol = block[0] * 7, block[1] * 7
+            for i in range(-3,4):
+                for j in range(-3,4):
+                    row, col = blockrow + i, blockcol + j
+                    if(subpixel_offsets[row,col] > 0): patch.append((row,col,subpixel_offsets[row,col]))
 
-    return filteredoffsets
+    return filteredoffsets, goodpatches
 
 @timeitstep(LaserDetectorStep.FILTER)
 def throw_out_small_patches(gval_subpixels):
@@ -392,7 +410,7 @@ def segment_laser_lines(img, segment_mode):
         mst = maximumSpanningTree(graph)
 
 
-def imagept_laserplane_assoc(img, planes):
+def imagept_laserplane_assoc(patches, polarlines):
     '''
     Associates each laser points in the image with one of the provided laser planes or throws it out.
 
@@ -401,15 +419,56 @@ def imagept_laserplane_assoc(img, planes):
 
     :return: (list[list[tuple(float,float,float)]]) Image points organized plane, with the index of the plane in the planes array corresponding to the index of its member points in the returned array.
     '''
-    pass
+    # associate each laser patch with a line
+        # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
+        # for speed could just pick one point from patch, will likely be enough given circumstances
+        # we throw out patches too far from any lines
+    maxdistfromline = 50 # px
+    patchgroups = [[0, []] for _ in range(NUM_LASER_LINES)]
+    for patch in patches:
+        y, x, subpixel_offset_x = patch[0] # get point in patch
+        x += subpixel_offset_x # add subpixel offset to x
+        r_p = math.sqrt(x**2 + y**2) # get radius from origin to pt
+        th_p = math.atan2(y, x) # get theta from +x axis to pt
+        bestline = 0 # idx of best line
+        minval = float('inf') # distance from point to best line
+        for idx, line in enumerate(polarlines):
+            r, th = polarlines[idx] # r, th for cur line
+            d = abs(r - r_p * math.cos(th - th_p)) # distance from pt to cur line
+            if d < minval: # if found shorter distance
+                minval = d
+                bestline = idx
+        if minval < maxdistfromline:
+            patchgroups[bestline][1].append(patch)
+            patchgroups[bestline][0] += len(patch)
+    return patchgroups
 
-def extract_laser_points(img):
+def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]:
     '''
     Finds 3D coordinates of laser points in an image
 
     img - OpenCV Mat or otherwise compatible arraylike
     '''
-    pass
+    linepts = []
+    for patchgroup, idx in enumerate(patchgroups):
+        c_x, c_y, f_x, f_y = P_HD2K[0,2], P_HD2K[1,2], P_HD2K[0,0], P_HD2K[1,1]
+        a, b, c, d = laserplanes[idx]
+        numpts, patches = patchgroup
+        ptarr = np.empty((numpts,3))
+        ptarridx = 0
+        for patch in patches:
+            for px in patch:
+                u, v = px
+                u += subpximg[u,v]
+                x = (u - c_x) / f_x
+                y = (v - c_y) / f_y
+                t = - d / (a * x + b * y + c)
+                x *= t
+                y *= t
+                z = t
+                ptarr[ptarridx,:] = x, y, z
+                count += 1
+        linepts.append(ptarr)
 
 
 if __name__ == "__main__":
@@ -459,6 +518,12 @@ if __name__ == "__main__":
             cpimgs.append(cupy.asarray(img))
             filenames.append(filename)
     
+    laserplanes = np.load("Camera_Relative_Laser_Planes.npy", allow_pickle=True)
+    planes = [
+        (u, v, w, - u*x - v * y - w * z) 
+        for x,y,z,u,v,w in laserplanes
+    ]
+
     imgproctimes = 0
     count = 0
     for img in imgs:
@@ -475,9 +540,9 @@ if __name__ == "__main__":
             print(f"Img shape: {img.shape}")
             origwin = f"Img{count}"
             cv.namedWindow(origwin, cv.WINDOW_NORMAL)
-            cv.imshow(origwin, img)
+            cv.imshow(origwin, roi_img)
 
-        reward = reward_img(img)
+        reward = reward_img(roi_img)
         if LaserDetectorStep.REWARD in IMG_DISPLAYS:
             rewwin = f"rew{count}"
             cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
@@ -499,7 +564,7 @@ if __name__ == "__main__":
             cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
             cv.imshow(subpxwin, a)
 
-        subpxsfiltered = throw_out_small_patches_gpu(subpxs)
+        subpxsfiltered, patches = throw_out_small_patches_gpu(subpxs)
         if LaserDetectorStep.FILTER in IMG_DISPLAYS:
             filtwin = f"subpxgfilt {count}"
             cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
@@ -523,6 +588,9 @@ if __name__ == "__main__":
             lineswin = f"lines{count}"
             cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
             cv.imshow(lineswin, dispimg)
+        
+        patchgroups = imagept_laserplane_assoc(patches, lines)
+        extract_laser_points(subpxsfiltered, planes, patchgroups)
         
         if DEBUG_MODE:
             end_time = time.perf_counter()
