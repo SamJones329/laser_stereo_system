@@ -6,9 +6,10 @@ import time
 import numpy as np
 from numba import cuda # if cuda is not available, should set variable NUMBA_CUDA_SIM = 1 in terminal
 from PIL import Image
-from helpers import recurse_patch, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
+from helpers import DISP_COLORSf, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
 import cv2 as cv
 import sys
+import matplotlib.pyplot as plt
 
 # TODO: fix
 P_HD2K = np.array([
@@ -25,8 +26,10 @@ class LaserDetectorStep(Enum):
     FILTER = 5
     BIN = 6
     SEGMENT = 7
+    ASSOC = 8
+    PCL = 9
 
-IMG_DISPLAYS = []#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
+IMG_DISPLAYS = [LaserDetectorStep.PCL]#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
 TIMED_STEPS = []
 DEBUG_MODE = True
 
@@ -306,6 +309,7 @@ def throw_out_small_patches_gpu(subpixel_offsets):
                 for j in range(-3,4):
                     row, col = blockrow + i, blockcol + j
                     if(subpixel_offsets[row,col] > 0): patch.append((row,col,subpixel_offsets[row,col]))
+        goodpatches.append(patch)
 
     return filteredoffsets, goodpatches
 
@@ -410,6 +414,7 @@ def segment_laser_lines(img, segment_mode):
         mst = maximumSpanningTree(graph)
 
 
+@timeitstep(LaserDetectorStep.ASSOC)
 def imagept_laserplane_assoc(patches, polarlines):
     '''
     Associates each laser points in the image with one of the provided laser planes or throws it out.
@@ -443,6 +448,7 @@ def imagept_laserplane_assoc(patches, polarlines):
             patchgroups[bestline][0] += len(patch)
     return patchgroups
 
+@timeitstep(LaserDetectorStep.PCL)
 def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]:
     '''
     Finds 3D coordinates of laser points in an image
@@ -450,7 +456,7 @@ def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]
     img - OpenCV Mat or otherwise compatible arraylike
     '''
     linepts = []
-    for patchgroup, idx in enumerate(patchgroups):
+    for idx, patchgroup in enumerate(patchgroups):
         c_x, c_y, f_x, f_y = P_HD2K[0,2], P_HD2K[1,2], P_HD2K[0,0], P_HD2K[1,1]
         a, b, c, d = laserplanes[idx]
         numpts, patches = patchgroup
@@ -458,8 +464,8 @@ def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]
         ptarridx = 0
         for patch in patches:
             for px in patch:
-                u, v = px
-                u += subpximg[u,v]
+                u, v, offset = px
+                u += offset
                 x = (u - c_x) / f_x
                 y = (v - c_y) / f_y
                 t = - d / (a * x + b * y + c)
@@ -467,8 +473,8 @@ def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]
                 y *= t
                 z = t
                 ptarr[ptarridx,:] = x, y, z
-                count += 1
         linepts.append(ptarr)
+    return linepts
 
 
 if __name__ == "__main__":
@@ -511,14 +517,16 @@ if __name__ == "__main__":
     cpimgs = []
     filenames = []
     for filename in os.listdir(img_folder):
-        print(f"opening {filename}")
-        img = Image.open(os.path.join(img_folder, filename))
-        if img is not None:
-            imgs.append(np.asarray(img))
-            cpimgs.append(cupy.asarray(img))
-            filenames.append(filename)
+        if(filename.lower().endswith((".png", ".jpg", ".jpeg"))):
+            print(f"opening {filename}")
+            img = Image.open(os.path.join(img_folder, filename))
+            if img is not None:
+                imgs.append(np.asarray(img))
+                cpimgs.append(cupy.asarray(img))
+                filenames.append(filename)
     
-    laserplanes = np.load("Camera_Relative_Laser_Planes.npy", allow_pickle=True)
+    
+    laserplanes = np.load(os.path.join(curdir, img_folder, "Camera_Relative_Laser_Planes.npy"), allow_pickle=True)
     planes = [
         (u, v, w, - u*x - v * y - w * z) 
         for x,y,z,u,v,w in laserplanes
@@ -566,6 +574,7 @@ if __name__ == "__main__":
 
         subpxsfiltered, patches = throw_out_small_patches_gpu(subpxs)
         if LaserDetectorStep.FILTER in IMG_DISPLAYS:
+            print(f"Found ${len(patches)} good patches")
             filtwin = f"subpxgfilt {count}"
             cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
             cv.imshow(filtwin, subpxsfiltered)
@@ -590,8 +599,20 @@ if __name__ == "__main__":
             cv.imshow(lineswin, dispimg)
         
         patchgroups = imagept_laserplane_assoc(patches, lines)
-        extract_laser_points(subpxsfiltered, planes, patchgroups)
-        
+        if LaserDetectorStep.ASSOC in IMG_DISPLAYS:
+            pass
+
+        linepts = extract_laser_points(subpxsfiltered, planes, patchgroups)
+        if LaserDetectorStep.PCL in IMG_DISPLAYS:
+            pclfig = plt.figure()
+            ax = pclfig.add_subplot(projection="3d")
+            for idx, line in enumerate(linepts): 
+                ax.scatter(line[:,0], line[:,1], line[:,2], marker='o', color=DISP_COLORSf[idx])
+            ax.set_xlabel("X")
+            ax.set_ylabel("Y")
+            ax.set_zlabel("Z")
+            # plt.show(block=False)
+
         if DEBUG_MODE:
             end_time = time.perf_counter()
             total_time = end_time - start_time
@@ -603,5 +624,6 @@ if __name__ == "__main__":
     imgproctimes /= len(imgs)
     print(f"Average image processing time of {imgproctimes:.4f} seconds or {1 / imgproctimes:.4f} images per second achieved. ")
 
+    plt.show()
     cv.waitKey(0)
     cv.destroyAllWindows()

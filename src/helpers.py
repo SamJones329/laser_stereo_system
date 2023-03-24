@@ -20,6 +20,24 @@ DISP_COLORS = [ #BGR
     (255,180,100), # cerulean
 ]
 
+DISP_COLORSf = [ #BGR
+    (1,0,0), # royal blue
+    (0,1,0), # green
+    (0,0,1), # brick red
+    (1,1,0), # cyan
+    (1,0,1), # magenta
+    (0,1,1), # yellow
+    (1,1,1), # white
+    (.7,0,0), # dark blue
+    (0,.7,0), # forest green
+    (0,0,.7), # crimson
+    (.7,.7,0), # turquoise
+    (.7,0,.7), # purple
+    (0,.7,.7), # wheat
+    (.7,.7,.7), # gray
+    (1,.7,.4), # cerulean
+]
+
 # modifies in place and returns
 def calc_chessboard_corners(board_size, square_size):
     # type:(tuple[int, int], float) -> list[tuple[float, float, float]]
