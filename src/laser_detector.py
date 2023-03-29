@@ -531,6 +531,33 @@ if __name__ == "__main__":
         (u, v, w, - u*x - v * y - w * z) 
         for x,y,z,u,v,w in laserplanes
     ]
+    fig = plt.figure()
+    for plane, idx in enumerate(planes):
+        A, B, C, D = plane
+        centroid = laserplanes[idx, :3]
+        X = [
+            centroid[0] + 0.5,
+            centroid[0] - 0.5,
+            centroid[0] + 0.5,
+            centroid[0] - 0.5
+        ]
+        Y = [
+            (D - A*(centroid[0] + 0.5) - C*(centroid[2] - 0.5)) / B,
+            (D - A*(centroid[0] - 0.5) - C*(centroid[2] - 0.5)) / B,
+            (D - A*(centroid[0] + 0.5) - C*(centroid[2] + 0.5)) / B,
+            (D - A*(centroid[0] - 0.5) - C*(centroid[2] + 0.5)) / B
+        ]
+        Z = [
+            centroid[2] - 0.5,
+            centroid[2] - 0.5,
+            centroid[2] + 0.5,
+            centroid[2] + 0.5
+        ]
+        ax = plt.axes(projection='3d')
+        ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
+                        cmap='viridis', edgecolor='none')
+        ax.set_title('surface')
+
 
     imgproctimes = 0
     count = 0
