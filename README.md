@@ -1,6 +1,10 @@
 # laser_stereo_system
 Undergraduate thesis work on underwater active stereo.
 
+Calibration script requires to be run through ROS with minimum version of Melodic (Ubuntu 18.04) with Python 2.7 and OpenCV 3.4.
+
+Real-time script is more flexible, being developed to work via Anaconda Python. A requirements file is provided to list the necessary packages allowing easy installation and creation of environments. It is recommended to use mambaforge packaging of Anaconda as the default package manager, conda, often has issues installing the required packages.
+
 # Calibration
 `calibrate_laser.py` in the `src` directory contains a script for extracting extrinsic parameters of the laser relative to a given rectified images and the camera matrix.
 

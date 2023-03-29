@@ -6,7 +6,7 @@ import time
 import numpy as np
 from numba import cuda # if cuda is not available, should set variable NUMBA_CUDA_SIM = 1 in terminal
 from PIL import Image
-from helpers import DISP_COLORSf, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
+from helpers import DISP_COLORS, DISP_COLORSf, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
 import cv2 as cv
 import sys
 import matplotlib.pyplot as plt
@@ -29,7 +29,17 @@ class LaserDetectorStep(Enum):
     ASSOC = 8
     PCL = 9
 
-IMG_DISPLAYS = [LaserDetectorStep.PCL]#[LaserDetectorStep.BIN, LaserDetectorStep.SEGMENT]
+IMG_DISPLAYS = [
+    LaserDetectorStep.ORIG, 
+    LaserDetectorStep.REWARD, 
+    LaserDetectorStep.GVAL, 
+    LaserDetectorStep.SUBPX, 
+    LaserDetectorStep.FILTER,
+    LaserDetectorStep.BIN,
+    LaserDetectorStep.SEGMENT,
+    LaserDetectorStep.ASSOC,
+    LaserDetectorStep.PCL
+]
 TIMED_STEPS = []
 DEBUG_MODE = True
 
@@ -168,7 +178,7 @@ def find_gval_subpixels(gvals, reward_img):
         ln_reward = np.log(reward_img) 
     for row in range(gvals.shape[0]-WINLEN//2):
         for col in range(gvals.shape[1]-WINLEN//2):
-            if gvals[row,col] < GVAL_MIN_VAL: continue
+            if gvals[row,col] < DEFAULT_GVAL_MIN_VAL: continue
             # center of window
             center = row + offset_from_winstart_to_center
             
@@ -449,7 +459,7 @@ def imagept_laserplane_assoc(patches, polarlines):
     return patchgroups
 
 @timeitstep(LaserDetectorStep.PCL)
-def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]:
+def extract_laser_points(laserplanes, patchgroups, px_coord_offset=(0,0)) -> list[np.ndarray]:
     '''
     Finds 3D coordinates of laser points in an image
 
@@ -465,7 +475,8 @@ def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]
         for patch in patches:
             for px in patch:
                 u, v, offset = px
-                u += offset
+                u += offset + px_coord_offset[0]
+                v += px_coord_offset[1]
                 x = (u - c_x) / f_x
                 y = (v - c_y) / f_y
                 t = - d / (a * x + b * y + c)
@@ -473,6 +484,7 @@ def extract_laser_points(subpximg, laserplanes, patchgroups) -> list[np.ndarray]
                 y *= t
                 z = t
                 ptarr[ptarridx,:] = x, y, z
+                ptarridx += 1
         linepts.append(ptarr)
     return linepts
 
@@ -528,36 +540,38 @@ if __name__ == "__main__":
     
     laserplanes = np.load(os.path.join(curdir, img_folder, "Camera_Relative_Laser_Planes.npy"), allow_pickle=True)
     planes = [
-        (u, v, w, - u*x - v * y - w * z) 
+        (u, v, w, -u*x -v*y -w*z) 
         for x,y,z,u,v,w in laserplanes
     ]
-    fig = plt.figure()
-    for plane, idx in enumerate(planes):
+    fig = plt.figure("Calib Planes")
+    ax = fig.add_subplot(projection='3d')
+    ax.set_title('calib planes')
+    ax.set_xlabel("X")
+    ax.set_ylabel("Y")
+    ax.set_zlabel("Z")
+    for idx, plane in enumerate(planes):
+
         A, B, C, D = plane
         centroid = laserplanes[idx, :3]
-        X = [
+        np.linspace(-6, 6, 30)
+        x = np.array([
             centroid[0] + 0.5,
             centroid[0] - 0.5,
             centroid[0] + 0.5,
             centroid[0] - 0.5
-        ]
-        Y = [
-            (D - A*(centroid[0] + 0.5) - C*(centroid[2] - 0.5)) / B,
-            (D - A*(centroid[0] - 0.5) - C*(centroid[2] - 0.5)) / B,
-            (D - A*(centroid[0] + 0.5) - C*(centroid[2] + 0.5)) / B,
-            (D - A*(centroid[0] - 0.5) - C*(centroid[2] + 0.5)) / B
-        ]
-        Z = [
-            centroid[2] - 0.5,
-            centroid[2] - 0.5,
-            centroid[2] + 0.5,
-            centroid[2] + 0.5
-        ]
-        ax = plt.axes(projection='3d')
-        ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
-                        cmap='viridis', edgecolor='none')
-        ax.set_title('surface')
+        ])
+        y = np.array([
+            centroid[1] - 0.5,
+            centroid[1] - 0.5,
+            centroid[1] + 0.5,
+            centroid[1] + 0.5,
+        ])
+        X, Y = np.meshgrid(x,y)
+        f = lambda x, y : (D - A*x - B*y) / C
+        Z = f(X,Y)
 
+        ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
+                        color=DISP_COLORSf[idx], edgecolor='none')
 
     imgproctimes = 0
     count = 0
@@ -572,16 +586,18 @@ if __name__ == "__main__":
         colmax = int(DEFAULT_ROI[1][1] * img.shape[1])+1
         roi_img = img[rowmin:rowmax,colmin:colmax]
         if LaserDetectorStep.ORIG in IMG_DISPLAYS:
-            print(f"Img shape: {img.shape}")
+            print(f"Img shape: {img.shape} -> {roi_img.shape}")
             origwin = f"Img{count}"
             cv.namedWindow(origwin, cv.WINDOW_NORMAL)
             cv.imshow(origwin, roi_img)
+            np.save(os.path.join(img_folder, f"img{count}roi"), roi_img)
 
         reward = reward_img(roi_img)
         if LaserDetectorStep.REWARD in IMG_DISPLAYS:
             rewwin = f"rew{count}"
             cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
             cv.imshow(rewwin, reward / np.max(reward))
+            np.save(os.path.join(img_folder, f"img{count}rew"), reward)
 
         gvals = calculate_gaussian_integral_windows(reward)
         if LaserDetectorStep.GVAL in IMG_DISPLAYS:
@@ -589,6 +605,7 @@ if __name__ == "__main__":
             cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
             hostgvals = gvals.copy_to_host()
             cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
+            np.save(os.path.join(img_folder, f"img{count}gvals"), hostgvals)
 
         subpxs = find_gval_subpixels_gpu(gvals, reward)
         if LaserDetectorStep.SUBPX in IMG_DISPLAYS:
@@ -598,6 +615,7 @@ if __name__ == "__main__":
             subpxwin = f"subpxs {count}"
             cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
             cv.imshow(subpxwin, a)
+            np.save(os.path.join(img_folder, f"img{count}subpxs"), subpxs)
 
         subpxsfiltered, patches = throw_out_small_patches_gpu(subpxs)
         if LaserDetectorStep.FILTER in IMG_DISPLAYS:
@@ -605,6 +623,7 @@ if __name__ == "__main__":
             filtwin = f"subpxgfilt {count}"
             cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
             cv.imshow(filtwin, subpxsfiltered)
+            np.save(os.path.join(img_folder, f"img{count}filt"), subpxsfiltered)
 
         laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
         laserpxbinary[subpxsfiltered != 0] = 255
@@ -612,10 +631,11 @@ if __name__ == "__main__":
             binwin = f"bin{count}"
             cv.namedWindow(binwin, cv.WINDOW_NORMAL)
             cv.imshow(binwin, laserpxbinary)
+            np.save(os.path.join(img_folder, f"img{count}bin"), laserpxbinary)
 
         lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES)
         if LaserDetectorStep.SEGMENT in IMG_DISPLAYS:
-            dispimg = np.copy(img)
+            dispimg = np.copy(roi_img)
             print("\nLines: ")
             if lines is not None:
                 lines = lines[lines[:, 0].argsort()] 
@@ -624,21 +644,36 @@ if __name__ == "__main__":
             lineswin = f"lines{count}"
             cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
             cv.imshow(lineswin, dispimg)
+            np.save(os.path.join(img_folder, f"img{count}lines"), lines)
         
         patchgroups = imagept_laserplane_assoc(patches, lines)
         if LaserDetectorStep.ASSOC in IMG_DISPLAYS:
-            pass
+            mergedlinespatchimg = roi_img.copy()
+            # mergedlinespatchimgclear = frame.copy()
+            for idx, group in enumerate(patchgroups): 
+                print("line %d has %d patches" % (idx, len(group)))
+                numpts, patches = group
+                for patch in patches:
+                    for pt in patch:
+                        row, col, x_offset = pt
+                        mergedlinespatchimg[row, col] = DISP_COLORS[idx]
+                        # cv.circle(mergedlinespatchimgclear, (col, row), 2, DISP_COLORS[idx])
+            assocwin = f"assoc{count}"
+            cv.namedWindow(assocwin, cv.WINDOW_NORMAL)
+            cv.imshow(assocwin, mergedlinespatchimg)
+            np.save(os.path.join(img_folder, f"img{count}patches"), patchgroups)
 
-        linepts = extract_laser_points(subpxsfiltered, planes, patchgroups)
+        linepts = extract_laser_points(planes, patchgroups, (rowmin, colmin))
         if LaserDetectorStep.PCL in IMG_DISPLAYS:
-            pclfig = plt.figure()
+            pclfig = plt.figure(f"points{count}")
             ax = pclfig.add_subplot(projection="3d")
+            ax.set_title(f"points{count}")
             for idx, line in enumerate(linepts): 
                 ax.scatter(line[:,0], line[:,1], line[:,2], marker='o', color=DISP_COLORSf[idx])
             ax.set_xlabel("X")
             ax.set_ylabel("Y")
             ax.set_zlabel("Z")
-            # plt.show(block=False)
+            np.save(os.path.join(img_folder, f"img{count}points"), linepts)
 
         if DEBUG_MODE:
             end_time = time.perf_counter()
@@ -652,5 +687,8 @@ if __name__ == "__main__":
     print(f"Average image processing time of {imgproctimes:.4f} seconds or {1 / imgproctimes:.4f} images per second achieved. ")
 
     plt.show()
-    cv.waitKey(0)
-    cv.destroyAllWindows()
+    while True:
+        k = cv.waitKey(0) & 0xFF
+        if ord('q') == k:
+            cv.destroyAllWindows()
+            exit(0)
