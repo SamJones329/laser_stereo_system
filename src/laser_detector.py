@@ -566,6 +566,13 @@ if __name__ == "__main__":
 
         ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
                         color=DISP_COLORSf[idx], edgecolor='none')
+    # ax.scatter([0], [0], [0], color=[0,0,0], marker='o')
+    r = 0.02
+    u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
+    x = np.cos(u) * np.sin(v)
+    y = np.sin(u) * np.sin(v)
+    z = np.cos(v)
+    ax.plot_surface(x, y, z, cmap=plt.cm.YlGnBu_r)
 
     imgproctimes = 0
     count = 0
@@ -579,71 +586,72 @@ if __name__ == "__main__":
         colmin = int(DEFAULT_ROI[0][1] * img.shape[1])
         colmax = int(DEFAULT_ROI[1][1] * img.shape[1])+1
         roi_img = img[rowmin:rowmax,colmin:colmax]
-        if LaserDetectorStep.ORIG in IMG_DISPLAYS:
-            print(f"Img shape: {img.shape} -> {roi_img.shape}")
-            origwin = f"Img{count}"
-            cv.namedWindow(origwin, cv.WINDOW_NORMAL)
-            cv.imshow(origwin, roi_img)
-            np.save(os.path.join(img_folder, f"img{count}roi"), roi_img)
+        # if LaserDetectorStep.ORIG in IMG_DISPLAYS:
+        #     print(f"Img shape: {img.shape} -> {roi_img.shape}")
+        #     origwin = f"Img{count}"
+        #     cv.namedWindow(origwin, cv.WINDOW_NORMAL)
+        #     cv.imshow(origwin, roi_img)
+        #     np.save(os.path.join(img_folder, f"img{count}roi"), roi_img)
 
-        reward = reward_img(roi_img)
-        if LaserDetectorStep.REWARD in IMG_DISPLAYS:
-            rewwin = f"rew{count}"
-            cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
-            cv.imshow(rewwin, reward / np.max(reward))
-            np.save(os.path.join(img_folder, f"img{count}rew"), reward)
+        # reward = reward_img(roi_img)
+        # if LaserDetectorStep.REWARD in IMG_DISPLAYS:
+        #     rewwin = f"rew{count}"
+        #     cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
+        #     cv.imshow(rewwin, reward / np.max(reward))
+        #     np.save(os.path.join(img_folder, f"img{count}rew"), reward)
 
-        gvals = calculate_gaussian_integral_windows(reward)
-        if LaserDetectorStep.GVAL in IMG_DISPLAYS:
-            gvalwin = f"gvals{count}"
-            cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
-            hostgvals = gvals.copy_to_host()
-            cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
-            np.save(os.path.join(img_folder, f"img{count}gvals"), hostgvals)
+        # gvals = calculate_gaussian_integral_windows(reward)
+        # if LaserDetectorStep.GVAL in IMG_DISPLAYS:
+        #     gvalwin = f"gvals{count}"
+        #     cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
+        #     hostgvals = gvals.copy_to_host()
+        #     cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
+        #     np.save(os.path.join(img_folder, f"img{count}gvals"), hostgvals)
 
-        subpxs = find_gval_subpixels_gpu(gvals, reward)
-        if LaserDetectorStep.SUBPX in IMG_DISPLAYS:
-            a = subpxs.copy()
-            a[subpxs != 0] = 1
-            print(f"{np.count_nonzero(a)} subpxs")
-            subpxwin = f"subpxs {count}"
-            cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
-            cv.imshow(subpxwin, a)
-            np.save(os.path.join(img_folder, f"img{count}subpxs"), subpxs)
+        # subpxs = find_gval_subpixels_gpu(gvals, reward)
+        # if LaserDetectorStep.SUBPX in IMG_DISPLAYS:
+        #     a = subpxs.copy()
+        #     a[subpxs != 0] = 1
+        #     print(f"{np.count_nonzero(a)} subpxs")
+        #     subpxwin = f"subpxs {count}"
+        #     cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
+        #     cv.imshow(subpxwin, a)
+        #     np.save(os.path.join(img_folder, f"img{count}subpxs"), subpxs)
 
-        subpxsfiltered, patches = throw_out_small_patches_gpu(subpxs)
-        if LaserDetectorStep.FILTER in IMG_DISPLAYS:
-            print(f"Found ${len(patches)} good patches")
-            filtwin = f"subpxgfilt {count}"
-            cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
-            cv.imshow(filtwin, subpxsfiltered)
-            np.save(os.path.join(img_folder, f"img{count}filt"), subpxsfiltered)
+        # subpxsfiltered, patches = throw_out_small_patches_gpu(subpxs)
+        # if LaserDetectorStep.FILTER in IMG_DISPLAYS:
+        #     print(f"Found ${len(patches)} good patches")
+        #     filtwin = f"subpxgfilt {count}"
+        #     cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
+        #     cv.imshow(filtwin, subpxsfiltered)
+        #     np.save(os.path.join(img_folder, f"img{count}filt"), subpxsfiltered)
 
-        laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
-        laserpxbinary[subpxsfiltered != 0] = 255
-        if LaserDetectorStep.BIN in IMG_DISPLAYS:
-            binwin = f"bin{count}"
-            cv.namedWindow(binwin, cv.WINDOW_NORMAL)
-            cv.imshow(binwin, laserpxbinary)
-            np.save(os.path.join(img_folder, f"img{count}bin"), laserpxbinary)
+        # laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
+        # laserpxbinary[subpxsfiltered != 0] = 255
+        # if LaserDetectorStep.BIN in IMG_DISPLAYS:
+        #     binwin = f"bin{count}"
+        #     cv.namedWindow(binwin, cv.WINDOW_NORMAL)
+        #     cv.imshow(binwin, laserpxbinary)
+        #     np.save(os.path.join(img_folder, f"img{count}bin"), laserpxbinary)
 
-        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES)
-        if LaserDetectorStep.SEGMENT in IMG_DISPLAYS:
-            dispimg = np.copy(roi_img)
-            print("\nLines: ")
-            if lines is not None:
-                lines = lines[lines[:, 0].argsort()] 
-                draw_polar_lines(dispimg, lines)
+        # lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES)
+        # if LaserDetectorStep.SEGMENT in IMG_DISPLAYS:
+        #     dispimg = np.copy(roi_img)
+        #     print("\nLines: ")
+        #     if lines is not None:
+        #         lines = lines[lines[:, 0].argsort()] 
+        #         draw_polar_lines(dispimg, lines)
             
-            lineswin = f"lines{count}"
-            cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
-            cv.imshow(lineswin, dispimg)
-            np.save(os.path.join(img_folder, f"img{count}lines"), lines)
+        #     lineswin = f"lines{count}"
+        #     cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
+        #     cv.imshow(lineswin, dispimg)
+        #     np.save(os.path.join(img_folder, f"img{count}lines"), lines)
         
-        patchgroups = imagept_laserplane_assoc(patches, lines)
+        patchgroups = np.load(os.path.join(img_folder, f"img{count}patches.npy"), allow_pickle=True) #imagept_laserplane_assoc(patches, lines)
         if LaserDetectorStep.ASSOC in IMG_DISPLAYS:
             mergedlinespatchimg = roi_img.copy()
             # mergedlinespatchimgclear = frame.copy()
+            print(f"Image {count}")
             for idx, group in enumerate(patchgroups): 
                 print("line %d has %d patches" % (idx, len(group)))
                 numpts, patches = group
@@ -655,7 +663,7 @@ if __name__ == "__main__":
             assocwin = f"assoc{count}"
             cv.namedWindow(assocwin, cv.WINDOW_NORMAL)
             cv.imshow(assocwin, mergedlinespatchimg)
-            np.save(os.path.join(img_folder, f"img{count}patches"), patchgroups)
+            # np.save(os.path.join(img_folder, f"img{count}patches"), patchgroups)
 
         linepts = extract_laser_points(planes, patchgroups, (rowmin, colmin))
         if LaserDetectorStep.PCL in IMG_DISPLAYS:
@@ -663,11 +671,12 @@ if __name__ == "__main__":
             ax = pclfig.add_subplot(projection="3d")
             ax.set_title(f"points{count}")
             for idx, line in enumerate(linepts): 
+                print(f"line {idx} has {len(line)} points")
                 ax.scatter(line[:,0], line[:,1], line[:,2], marker='o', color=DISP_COLORSf[idx])
             ax.set_xlabel("X")
             ax.set_ylabel("Y")
             ax.set_zlabel("Z")
-            np.save(os.path.join(img_folder, f"img{count}points"), linepts)
+            # np.save(os.path.join(img_folder, f"img{count}points"), linepts)
 
         if DEBUG_MODE:
             end_time = time.perf_counter()
@@ -680,7 +689,7 @@ if __name__ == "__main__":
     imgproctimes /= len(imgs)
     print(f"Average image processing time of {imgproctimes:.4f} seconds or {1 / imgproctimes:.4f} images per second achieved. ")
 
-    plt.show()
+    plt.show(block=False)
     while True:
         k = cv.waitKey(0) & 0xFF
         if ord('q') == k:
