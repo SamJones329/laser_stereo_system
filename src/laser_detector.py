@@ -10,13 +10,7 @@ from helpers import DISP_COLORS, DISP_COLORSf, maximumSpanningTree, angle_wrap, 
 import cv2 as cv
 import sys
 import matplotlib.pyplot as plt
-
-# TODO: fix
-P_HD2K = np.array([
-    [703.9299926757812, 0.0, 541.625], 
-    [0.0, 703.5599975585938, 311.8370056152344], 
-    [0.0, 0.0, 1.0]
-])
+from camera_info import ZedMini
 
 class LaserDetectorStep(Enum):
     ORIG = 1
@@ -467,7 +461,7 @@ def extract_laser_points(laserplanes, patchgroups, px_coord_offset=(0,0)) -> lis
     '''
     linepts = []
     for idx, patchgroup in enumerate(patchgroups):
-        c_x, c_y, f_x, f_y = P_HD2K[0,2], P_HD2K[1,2], P_HD2K[0,0], P_HD2K[1,1]
+        c_x, c_y, f_x, f_y = ZedMini.LeftRectHD2K.P[0,2], ZedMini.LeftRectHD2K.P[1,2], ZedMini.LeftRectHD2K.P[0,0], ZedMini.LeftRectHD2K.P[1,1]
         a, b, c, d = laserplanes[idx]
         numpts, patches = patchgroup
         ptarr = np.empty((numpts,3))

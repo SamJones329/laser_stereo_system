@@ -17,95 +17,12 @@ from geometry_msgs.msg import PolygonStamped, Point32
 from visualization_msgs.msg import Marker, MarkerArray
 from jsk_recognition_msgs.msg import PolygonArray
 
+from camera_info import ZedMini
 from helpers import *
 
 DEBUG_LINES = False
 USE_PREV_DATA = True
 # https://stackoverflow.com/questions/53591350/plane-fit-of-3d-points-with-singular-value-decomposition
-
-class Cam:
-    '''Left Camera Params'''
-
-    K_VGA = np.array([
-        [351.9649963378906, 0.0,               314.0625         ],
-        [0.0,               351.7799987792969, 179.9185028076172], 
-        [0.0,               0.0,               1.0              ]
-    ])
-    K = np.array([
-        [703.9299926757812, 0.0, 469.625], 
-        [0.0, 703.5599975585938, 271.3370056152344], 
-        [0.0, 0.0, 1.0]
-    ])
-    K_HD2K = np.array([
-        [703.9299926757812, 0.0, 541.625], 
-        [0.0, 703.5599975585938, 311.8370056152344], 
-        [0.0, 0.0, 1.0]
-    ])
-    '''
-    Intrinsic camera matrix for the raw (distorted) images.
-        [fx  0 cx]
-    K = [ 0 fy cy]
-        [ 0  0  1]
-    Projects 3D points in the camera coordinate frame to 2D pixel
-    coordinates using the focal lengths (fx, fy) and principal point
-    (cx, cy).
-    '''
-
-    D_RAW = np.array(
-        [-0.17503899335861206, 0.02804959937930107, 0.0, 5.8294201153330505e-05, 0.000261220004176721]
-    )
-    D = np.array([], dtype=np.float64)
-    '''
-    The distortion parameters, size depending on the distortion model.
-    For "plumb_bob", the 5 parameters are: (k1, k2, t1, t2, k3).
-    '''
-
-    R = np.array([
-        [1.0, 0.0, 0.0], 
-        [0.0, 1.0, 0.0], 
-        [0.0, 0.0, 1.0]
-    ])
-    '''
-    Rectification matrix (stereo cameras only)
-    A rotation matrix aligning the camera coordinate system to the ideal
-    stereo image plane so that epipolar lines in both stereo images are
-    parallel.
-    '''
-
-    P_VGA = np.array([
-        [351.9649963378906, 0.0,               314.0625,          0.0],
-        [0.0,               351.7799987792969, 179.9185028076172, 0.0], 
-        [0.0,               0.0,               1.0,               0.0]
-    ])
-    '''
-    Projection/camera matrix
-        [fx'  0  cx' Tx]
-    P = [ 0  fy' cy' Ty]
-        [ 0   0   1   0]
-    By convention, this matrix specifies the intrinsic (camera) matrix
-    of the processed (rectified) image. That is, the left 3x3 portion
-    is the normal camera intrinsic matrix for the rectified image.
-    It projects 3D points in the camera coordinate frame to 2D pixel
-    coordinates using the focal lengths (fx', fy') and principal point
-    (cx', cy') - these may differ from the values in K.
-    For monocular cameras, Tx = Ty = 0. Normally, monocular cameras will
-    also have R = the identity and P[1:3,1:3] = K.
-    For a stereo pair, the fourth column [Tx Ty 0]' is related to the
-    position of the optical center of the second camera in the first
-    camera's frame. We assume Tz = 0 so both cameras are in the same
-    stereo image plane. The first camera always has Tx = Ty = 0. For
-    the right (second) camera of a horizontal stereo pair, Ty = 0 and
-    Tx = -fx' * B, where B is the baseline between the cameras.
-    Given a 3D point [X Y Z]', the projection (x, y) of the point onto
-    the rectified image is given by:
-    [u v w]' = P * [X Y Z 1]'
-            x = u / w
-            y = v / w
-    This holds for both images of a stereo pair.
-    '''
-
-
-
 
 def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     # type:(list[cv.Mat], tuple[int, int], float) -> None
@@ -129,7 +46,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
         # ==== Find chessboard plane homography ====
         # https://www.youtube.com/watch?v=US9p9CL9Ywg
-        mtx = Cam.K
+        mtx = ZedMini.LeftRectHD2K.K
         # assume img rectified already
         dist = None
         criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
