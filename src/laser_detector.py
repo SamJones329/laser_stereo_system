@@ -25,14 +25,14 @@ class LaserDetectorStep(Enum):
 
 IMG_DISPLAYS = [
     # LaserDetectorStep.ORIG, 
-    # LaserDetectorStep.REWARD, 
-    # LaserDetectorStep.GVAL, 
-    # LaserDetectorStep.SUBPX, 
-    # LaserDetectorStep.FILTER,
-    # LaserDetectorStep.BIN,
-    # LaserDetectorStep.SEGMENT,
+    LaserDetectorStep.REWARD, 
+    LaserDetectorStep.GVAL, 
+    LaserDetectorStep.SUBPX, 
+    LaserDetectorStep.FILTER,
+    LaserDetectorStep.BIN,
+    LaserDetectorStep.SEGMENT,
     # LaserDetectorStep.ASSOC,
-    # LaserDetectorStep.PCL
+    LaserDetectorStep.PCL
 ]
 TIMED_STEPS = []
 DEBUG_MODE = True
@@ -362,7 +362,7 @@ SEGMENT_HOUGH_LINES_P = 0
 SEGMENT_HOUGH_LINES = 1
 SEGMENT_MAX_SPAN_TREE = 2
 @timeitstep(LaserDetectorStep.SEGMENT)
-def segment_laser_lines(img, segment_mode):
+def segment_laser_lines(img, segment_mode, patches=None):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
         lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
         print(lines)
@@ -410,12 +410,79 @@ def segment_laser_lines(img, segment_mode):
         # create pixel groups
         groups = []
         numgroups = len(groups)
-        
-        # create graph where a pixel group is connected to another pixel group by an edge with 
-        # weight representing the number of shared rows
-        graph = np.zeros((numgroups, numgroups), dtype=np.int)
+        graph = {}
+        origins = set()
+        edges: list = []
+        patchmembers = [{"rows": set(), "cols": set(), "mincol": 99999999, "maxcol": -1} for _ in range(len(patches))]
+        for i, patch in enumerate(patches):
+            pxs = ""
+            for px in patch:
+                patchmembers[i]["rows"].add(px[0])
+                patchmembers[i]["cols"].add(px[1])
+                patchmembers[i]["mincol"] = min(patchmembers[i]["mincol"], px[1])
+                # patchmembers[i]["mincol"] = max(patchmembers[i]["maxcol"], px[1])
+                # pxs += (", %d" % patchmembers[i]["mincol"]) 
+                graph[i] = set()
+                origins.add(i)
+            # print(pxs)
+            # print()
 
-        mst = maximumSpanningTree(graph)
+        for i, patch in enumerate(patches):
+            minnext = -1
+            for j, otherpatch in enumerate(patches):
+                # print(i,j)
+                # print(patchmembers[j]["mincol"], patchmembers[i]["mincol"])
+                if patchmembers[j]["mincol"] > patchmembers[i]["mincol"]:
+                    # print("candidate")
+                    rowshare = set()
+                    for px in patch:
+                        if px[0] not in patchmembers[j]["rows"] or px[0] in rowshare: continue
+                        r, c, _ = px
+                        c += 1
+                        while img[r,c] == 0:
+                            c += 1
+                        if c in patchmembers[j]["cols"]:
+                            rowshare.add(r)
+                    rows_shared = len(rowshare)             
+                    if rows_shared > 0:
+                        graph[i].add((j,rows_shared))
+                        edges.append((i, j, rows_shared)) # from, to, weight
+                        if j in origins: origins.remove(j)
+
+        edges.sort(key=lambda x: x[2], reverse=True)
+        visited = set()
+        print(origins)
+        for patchidx in origins:
+            visited.add(patchidx)
+        path = {}
+        traversed = set()
+        numpatches = len(patches)
+        print(numpatches)
+        count = 0
+        while len(visited) < numpatches:
+            count += 1
+            src, dst, weight = edges.pop(0)
+            if dst in visited: continue
+            visited.add(dst)
+            path[src] = dst
+        print(count)
+        print(path)
+        linegroups = [[0,[]] for _ in range(NUM_LASER_LINES)]
+        for origin in origins:
+            linegroups[0][1].append(patches[origin])
+            linegroups[0][0] += len(patches[origin])
+            src = origin
+            idx = 1
+            while src in path:
+                idx += 1
+                dst = path[src]
+                linegroups[idx][1].append(patches[dst])
+                linegroups[idx][0] += len(patches[dst])
+                src = dst
+
+        return linegroups
+
+        # mst = maximumSpanningTree(graph)
 
 
 @timeitstep(LaserDetectorStep.ASSOC)
@@ -513,9 +580,11 @@ if __name__ == "__main__":
     curdir = os.getcwd()
     folders = curdir.split('/')
     if folders[-1] == "catkin_ws":
-        img_folder = "src/laser_stereo_system/calib_imgs"
+        img_folder = "src/laser_stereo_system/test_imgs"
+        calib_folder = "src/laser_stereo_system/calib_imgs"
     else: 
-        img_folder = "calib_imgs"
+        img_folder = "test_imgs"
+        calib_folder = "calib_imgs"
     imgs = []
     cpimgs = []
     filenames = []
@@ -529,8 +598,7 @@ if __name__ == "__main__":
                 filenames.append(filename)
     
     
-    laserplanes = np.load(os.path.join(curdir, img_folder, "Camera_Relative_Laser_Planes.npy"), allow_pickle=True)
-    print(laserplanes)
+    laserplanes = np.load(os.path.join(curdir, calib_folder, "Camera_Relative_Laser_Planes.npy"), allow_pickle=True)
     planes = [
         (u, v, w, -u*x -v*y -w*z) 
         for x,y,z,u,v,w in laserplanes
@@ -589,14 +657,14 @@ if __name__ == "__main__":
             origwin = f"Img{count}"
             cv.namedWindow(origwin, cv.WINDOW_NORMAL)
             cv.imshow(origwin, roi_img)
-            np.save(os.path.join(img_folder, f"img{count}roi"), roi_img)
+            np.save(os.path.join(calib_folder, f"img{count}roi"), roi_img)
 
         reward = reward_img(roi_img)
         if LaserDetectorStep.REWARD in IMG_DISPLAYS:
             rewwin = f"rew{count}"
             cv.namedWindow(rewwin, cv.WINDOW_NORMAL)
             cv.imshow(rewwin, reward / np.max(reward))
-            np.save(os.path.join(img_folder, f"img{count}rew"), reward)
+            np.save(os.path.join(calib_folder, f"img{count}rew"), reward)
 
         gvals = calculate_gaussian_integral_windows(reward)
         if LaserDetectorStep.GVAL in IMG_DISPLAYS:
@@ -604,7 +672,7 @@ if __name__ == "__main__":
             cv.namedWindow(gvalwin, cv.WINDOW_NORMAL)
             hostgvals = gvals.copy_to_host()
             cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
-            np.save(os.path.join(img_folder, f"img{count}gvals"), hostgvals)
+            np.save(os.path.join(calib_folder, f"img{count}gvals"), hostgvals)
 
         subpxs = find_gval_subpixels_gpu(gvals, reward)
         if LaserDetectorStep.SUBPX in IMG_DISPLAYS:
@@ -614,7 +682,7 @@ if __name__ == "__main__":
             subpxwin = f"subpxs {count}"
             cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
             cv.imshow(subpxwin, a)
-            np.save(os.path.join(img_folder, f"img{count}subpxs"), subpxs)
+            np.save(os.path.join(calib_folder, f"img{count}subpxs"), subpxs)
 
         subpxsfiltered, patches = throw_out_small_patches_gpu(subpxs)
         if LaserDetectorStep.FILTER in IMG_DISPLAYS:
@@ -622,7 +690,7 @@ if __name__ == "__main__":
             filtwin = f"subpxgfilt {count}"
             cv.namedWindow(filtwin, cv.WINDOW_NORMAL)
             cv.imshow(filtwin, subpxsfiltered)
-            np.save(os.path.join(img_folder, f"img{count}filt"), subpxsfiltered)
+            np.save(os.path.join(calib_folder, f"img{count}filt"), subpxsfiltered)
 
         laserpxbinary = np.zeros(subpxsfiltered.shape, dtype=np.uint8)
         laserpxbinary[subpxsfiltered != 0] = 255
@@ -630,23 +698,25 @@ if __name__ == "__main__":
             binwin = f"bin{count}"
             cv.namedWindow(binwin, cv.WINDOW_NORMAL)
             cv.imshow(binwin, laserpxbinary)
-            np.save(os.path.join(img_folder, f"img{count}bin"), laserpxbinary)
+            np.save(os.path.join(calib_folder, f"img{count}bin"), laserpxbinary)
 
-        lines = segment_laser_lines(laserpxbinary, SEGMENT_HOUGH_LINES)
+        # lines = ...
+        patchgroups = segment_laser_lines(laserpxbinary, SEGMENT_MAX_SPAN_TREE, patches=patches)
         if LaserDetectorStep.SEGMENT in IMG_DISPLAYS:
-            dispimg = np.copy(roi_img)
-            print("\nLines: ")
-            if lines is not None:
-                lines = lines[lines[:, 0].argsort()] 
-                draw_polar_lines(dispimg, lines)
+            print(patchgroups)
+            # dispimg = np.copy(roi_img)
+            # print("\nLines: ")
+            # if lines is not None:
+                # lines = lines[lines[:, 0].argsort()] 
+                # draw_polar_lines(dispimg, lines)
             
-            lineswin = f"lines{count}"
-            cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
-            cv.imshow(lineswin, dispimg)
-            np.save(os.path.join(img_folder, f"img{count}lines"), lines)
+            # lineswin = f"lines{count}"
+            # cv.namedWindow(lineswin, cv.WINDOW_NORMAL)
+            # cv.imshow(lineswin, dispimg)
+            # np.save(os.path.join(calib_folder, f"img{count}lines"), lines)
         
-        patchgroups = imagept_laserplane_assoc(patches, lines)
-        if LaserDetectorStep.ASSOC in IMG_DISPLAYS:
+        # patchgroups = imagept_laserplane_assoc(patches, lines)
+        # if LaserDetectorStep.ASSOC in IMG_DISPLAYS:
             mergedlinespatchimg = roi_img.copy()
             for idx, group in enumerate(patchgroups): 
                 print("line %d has %d patches" % (idx, len(group)))
@@ -659,7 +729,7 @@ if __name__ == "__main__":
             assocwin = f"assoc{count}"
             cv.namedWindow(assocwin, cv.WINDOW_NORMAL)
             cv.imshow(assocwin, mergedlinespatchimg)
-            np.save(os.path.join(img_folder, f"img{count}patches"), patchgroups)
+            np.save(os.path.join(calib_folder, f"img{count}patches"), patchgroups)
 
         linepts = extract_laser_points(planes, patchgroups, (rowmin, colmin))
         if LaserDetectorStep.PCL in IMG_DISPLAYS:
@@ -674,7 +744,7 @@ if __name__ == "__main__":
             ax.set_xlabel("X")
             ax.set_ylabel("Y")
             ax.set_zlabel("Z")
-            np.save(os.path.join(img_folder, f"img{count}points"), linepts)
+            np.save(os.path.join(calib_folder, f"img{count}points"), linepts)
 
         if DEBUG_MODE:
             end_time = time.perf_counter()
