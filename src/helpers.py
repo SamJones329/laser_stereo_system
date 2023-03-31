@@ -265,6 +265,20 @@ def point_segment_distance(px, py, x1, y1, x2, y2):
 
   return math.hypot(dx, dy)
 
+def px_2_3d(row, col, plane, K):
+    '''Plane as (A,B,C,D). K as instrinsic camera matrix.'''
+    a, b, c, d = plane
+    c_x, c_y, f_x, f_y = K[0,2], K[1,2], K[0,0], K[1,1]
+    if f_x == 0 or f_y == 0: print("px_2_3d warning: focal length of zero found")
+    x = (col - c_x) / f_x
+    y = (row - c_y) / f_y
+    t_denom = (a * x + b * y + c)
+    if t_denom == 0: print("px_2_3d warning: division by 0")
+    t = - d / t_denom
+    x *= t
+    y *= t
+    z = t
+    return x, y, z
 
 ################ MST Geeks For Geeks ######################
 # Python program for the above algorithm

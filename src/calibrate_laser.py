@@ -20,6 +20,16 @@ from jsk_recognition_msgs.msg import PolygonArray
 from camera_info import ZedMini
 from helpers import *
 
+def verify_planes(planes, imgpoints):
+    linepts = np.empty((0,3))
+    for i, planeimgpoints in enumerate(imgpoints):
+        pts3d = np.empty((len(planeimgpoints),3))
+        print(type(planeimgpoints))
+        for j, pt in enumerate(planeimgpoints):
+            pts3d[j] = px_2_3d(pt[1], pt[0], planes[i], ZedMini.LeftRectHD2K.K)
+        linepts = np.append(linepts, pts3d, axis=0)
+    return linepts
+
 DEBUG_LINES = False
 USE_PREV_DATA = True
 # https://stackoverflow.com/questions/53591350/plane-fit-of-3d-points-with-singular-value-decomposition
@@ -36,10 +46,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
     s = chessboard_interior_dimensions
     n = 15 # number of laser lines
-    P = [[] for _ in range(n)] # 3D pts
-    for idx, frame in enumerate(data):
+    Pts3d = [[] for _ in range(n)] # 3D pts
+    PtsImg = [[] for _ in range(n)] # Img pts
+    for frameidx, frame in enumerate(data):
         if USE_PREV_DATA: break
-        print("processing frame %d with size" % (idx+1))
+        print("processing frame %d with size" % (frameidx+1))
         print(frame.shape)
         # scale down display images to have 500 px height and preserve aspect ratio
         disp_size = ( int( frame.shape[1] * (500./frame.shape[0]) ), 500 )
@@ -75,10 +86,30 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         corners2 = cv.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
 
         # find rotation and translation vectors
-        ret, rvecs, tvecs = cv.solvePnP(objp, corners2, mtx, dist)
+        ret, rvec, tvec = cv.solvePnP(objp, corners2, mtx, dist)
+
+        rotmat, jac = cv.Rodrigues(rvec)
+        # world (chessboard) reference frame to camera reference frame transformation matrix
+        world2cam = np.identity(4)
+        world2cam[:3,:3] = rotmat
+        world2cam[:3, 3] = tvec.flatten()
+        print("Chessboard -> Cam Transformation Mat:")
+        for row in world2cam: print(row)
+
+        chessboard_plane_point = world2cam.dot([0,0,0,1])
+        chessboard_normal_vec_to_point = world2cam.dot([0,0,1,1])
+        chessboard_normal_vec = chessboard_normal_vec_to_point[:3] - chessboard_plane_point[:3]
+        chessboard_plane = (
+            # (u, v, w, -u*x -v*y -w*z) 
+            chessboard_normal_vec[0], chessboard_normal_vec[1], chessboard_normal_vec[2],
+            -chessboard_normal_vec[0] * chessboard_plane_point[0]
+            -chessboard_normal_vec[1] * chessboard_plane_point[1]
+            -chessboard_normal_vec[2] * chessboard_plane_point[2]
+        )
+        print("Chessboard plane", chessboard_plane)
 
         # project 3d pts to image plane
-        imgpts, jac = cv.projectPoints(axis, rvecs, tvecs, mtx, dist) # can project more pts with jac?
+        imgpts, jac = cv.projectPoints(axis, rvec, tvec, mtx, dist) # can project more pts with jac?
 
         img = frame.copy()
         img = draw(img, corners2, imgpts)
@@ -399,10 +430,11 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             for patch in group:
                 for pt in patch:
                     row, col, x_offset = pt
-                    pt3d = H.dot([col + x_offset, row, 1])
+                    pt3d = px_2_3d(row, col+x_offset, chessboard_plane, ZedMini.LeftRectHD2K.K) #H.dot([col + x_offset, row, 1])
                     mergedlinespatchimg[row, col] = DISP_COLORS[idx]
                     cv.circle(mergedlinespatchimgclear, (col, row), 2, DISP_COLORS[idx])
-                    P[idx].append(pt3d)
+                    Pts3d[idx].append(pt3d)
+                    PtsImg[idx].append((col + x_offset, row))
 
         ###### This is just for rviz ######
         pts = []
@@ -411,7 +443,7 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
                 # x, y
                 # imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
                 imgpt = [pt[1] + pt[2], pt[0], 1]
-                newpt = np.dot(H, imgpt)
+                newpt = px_2_3d(imgpt[1], imgpt[0], chessboard_plane, ZedMini.LeftRectHD2K.K)
                 pts.append(newpt)
         pts = np.array(pts)
 
@@ -420,9 +452,6 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         h.stamp = rospy.Time.now()
         pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
         ptpub.publish(pc2msg)
-
-        np.save("calibpts", np.array(P)) # saves points in ~/.ros
-        np.save("cbhomog", H) # saves chessboard homography in ~/.ros
 
         if DEBUG_LINES:
             imgdisp = cv.resize(img, disp_size)
@@ -483,33 +512,18 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
 
     if USE_PREV_DATA:
         try:
-            P = np.load("calibpts.npy", allow_pickle=True) # reads from ~/.ros
-            H = np.load("cbhomog.npy", allow_pickle=True)
+            Pts3d = np.load("calibpts.npy", allow_pickle=True) # reads from ~/.ros
+            PtsImg = np.load("calibimgpts.npy", allow_pickle=True) # reads from ~/.ros
         except:
             print("error retrieving previous data, exiting...")
             return
-
-    # publish all 3D points together
-    ###### This is just for rviz ######
-    pts = []
-    for lineP in P:
-        for pt in lineP:
-            # x, y
-            # imgpt = np.reshape([pt[1] + pt[2], pt[0], 1], (3,1))
-            imgpt = [pt[1], pt[0], 1]
-            newpt = np.dot(H, imgpt)
-            pts.append(newpt)
-    pts = np.array(pts)
-    
-    h = Header()
-    h.frame_id = "/world"
-    h.stamp = rospy.Time.now()
-    pc2msg = point_cloud2.create_cloud_xyz32(h, pts)
-    ptpub.publish(pc2msg)
+    else:
+        np.save("calibpts", np.array(Pts3d)) # saves points in ~/.ros
+        np.save("calibimgpts", np.array(PtsImg)) # saves points in ~/.ros
 
     # RANSAC: form M subjects of k points from P
     planes = []
-    for lineP in P:
+    for lineP in Pts3d:
         potplanes = []
 
         M = 3
@@ -526,10 +540,10 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
             # xyzRT            = np.transpose(xyzR)                       
 
             #2. calculate the singular value decomposition of the xyzT matrix and get the normal as the last column of u matrix
-            u, sigma, v = np.linalg.svd(subsetRelative)
+            u, s, v = np.linalg.svd(subsetRelative)
             print("svd shapes u, sigma, v")
             print(u.shape)
-            print(sigma.shape)
+            print(s.shape)
             print(v.shape)
             normal = v[2]
             normal = normal / np.linalg.norm(normal)       #we want normal vectors normalized to unity
@@ -550,6 +564,8 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
     planemsgs = PolygonArray()
     planemsgs.header.frame_id = "/world"
     planemsgs.header.stamp = rospy.Time.now()
+    planehomogs = []
+    stdplanes = np.empty((n,4))
     for idx, plane in enumerate(planes):
         t = rospy.Time.now()
         fid = "/world"
@@ -567,29 +583,32 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         # D = Aa + Bb + Cc
         A, B, C = normal
         D = np.dot(normal, centroid)
+        stdplanes[idx] = A, B, C, -D
+        print("\nPlane ABCD")
+        print(A,B,C,-D)
 
         # Ax - Aa + By - Bb - Cc = 0
         # Ax + By = Aa + Bb + Cc
         # y = (D - Ax) / B
         p1 = Point32()
-        p1.x = centroid[0] + 0.5
-        p1.z = centroid[2] - 0.5
+        p1.x = centroid[0] + 0.3
+        p1.z = centroid[2] - 0.3
         p1.y = (D - A*p1.x - C*p1.z) / B
 
         p2 = Point32()
-        p2.x = centroid[0] - 0.5
-        p2.z = centroid[2] - 0.5
+        p2.x = centroid[0] - 0.3
+        p2.z = centroid[2] - 0.3
         p2.y = (D - A*p2.x - C*p2.z) / B
         
         # y = (D - Ax - Cz) / B
         p3 = Point32()
-        p3.x = centroid[0] + 0.5
-        p3.z = centroid[2] + 0.5
+        p3.x = centroid[0] + 0.3
+        p3.z = centroid[2] + 0.3
         p3.y = (D - A*p3.x - C*p3.z) / B
         
         p4 = Point32()
-        p4.x = centroid[0] - 0.5
-        p4.z = centroid[2] + 0.5
+        p4.x = centroid[0] - 0.3
+        p4.z = centroid[2] + 0.3
         p4.y = (D - A*p4.x - C*p4.z) / B
         
         planepolygon.polygon.points.append(p1)
@@ -605,15 +624,23 @@ def calibrate(data, chessboard_interior_dimensions=(9,6), square_size_m=0.1):
         planemsgs.likelihood.append(1)
         planemsgs.polygons.append(planepolygon)
 
-    planepub.publish(planemsgs)
-        # could maybe just use information better to extract a homography for the plane instead of the plane normal and stuff
-
     # save planes in file in <a,b,c,A,B,C> format where centroid is (a,b,c) and normal is (A,B,C)
     planes = np.array(planes)
     planes = np.reshape(planes, (planes.shape[0], 6))
     print("Planes (centroid, normal)=<X,Y,Z,U,V,W>")
     print(planes)
-    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes)
+    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes) 
+        
+    verify_pts = verify_planes(stdplanes, PtsImg)
+    print("verify_pts.shape: ", verify_pts.shape)
+    h = Header()
+    h.frame_id = "/world"
+    h.stamp = rospy.Time.now()
+    pc2msg = point_cloud2.create_cloud_xyz32(h, verify_pts)
+    ptpub.publish(pc2msg)
+    
+    planepub.publish(planemsgs)
+        # could maybe just use information better to extract a homography for the plane instead of the plane normal and stuff
 
 if __name__ == "__main__":
     rospy.init_node('calibrate_laser')

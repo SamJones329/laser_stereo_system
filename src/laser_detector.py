@@ -453,7 +453,7 @@ def imagept_laserplane_assoc(patches, polarlines):
     return patchgroups
 
 @timeitstep(LaserDetectorStep.PCL)
-def extract_laser_points(laserplanes, patchgroups, px_coord_offset=(0,0)) -> list[np.ndarray]:
+def extract_laser_points(planes_normal_form, patchgroups, px_coord_offset=(0,0)) -> list[np.ndarray]:
     '''
     Finds 3D coordinates of laser points in an image
 
@@ -462,22 +462,26 @@ def extract_laser_points(laserplanes, patchgroups, px_coord_offset=(0,0)) -> lis
     linepts = []
     for idx, patchgroup in enumerate(patchgroups):
         c_x, c_y, f_x, f_y = ZedMini.LeftRectHD2K.P[0,2], ZedMini.LeftRectHD2K.P[1,2], ZedMini.LeftRectHD2K.P[0,0], ZedMini.LeftRectHD2K.P[1,1]
-        a, b, c, d = laserplanes[idx]
+        a, b, c, d = planes_normal_form[idx] # the planes will be always be ordered by distance from origin
         numpts, patches = patchgroup
-        ptarr = np.empty((numpts,3))
+        ptarr = np.empty((3,numpts))
         ptarridx = 0
         for patch in patches:
             for px in patch:
-                u, v, offset = px
-                u += offset + px_coord_offset[0]
-                v += px_coord_offset[1]
+                v, u, offset = px # row, col, 
+                v += px_coord_offset[0] + offset
+                u += px_coord_offset[1]
                 x = (u - c_x) / f_x
                 y = (v - c_y) / f_y
                 t = - d / (a * x + b * y + c)
                 x *= t
                 y *= t
                 z = t
-                ptarr[ptarridx,:] = x, y, z
+                ptarr[0, ptarridx] = y # row
+                ptarr[1, ptarridx] = x # col
+                ptarr[2, ptarridx] = z 
+
+                # ptarr[ptarridx,:] = x, y, z
                 ptarridx += 1
         linepts.append(ptarr)
     return linepts
@@ -567,12 +571,12 @@ if __name__ == "__main__":
         ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
                         color=DISP_COLORSf[idx], edgecolor='none')
     # ax.scatter([0], [0], [0], color=[0,0,0], marker='o')
-    r = 0.02
+    # r = 0.02
     u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
     x = np.cos(u) * np.sin(v)
     y = np.sin(u) * np.sin(v)
     z = np.cos(v)
-    ax.plot_surface(x, y, z, cmap=plt.cm.YlGnBu_r)
+    ax.plot_surface(x * 0.25, y * 0.25, z * 0.25, cmap=plt.cm.YlGnBu_r)
 
     imgproctimes = 0
     count = 0
@@ -652,6 +656,23 @@ if __name__ == "__main__":
             mergedlinespatchimg = roi_img.copy()
             # mergedlinespatchimgclear = frame.copy()
             print(f"Image {count}")
+            pclfig = plt.figure(f"patch{count}")
+            ax = pclfig.add_subplot()#projection="3d")
+            ax.set_title(f"patch{count}")
+            for idx, group in enumerate(patchgroups): 
+                numpts, patches = group
+                print(numpts)
+                line = np.zeros((2, numpts))
+                ptidx = 0
+                for patch in patches:
+                    for px in patch:
+                        row, col, x_offset = px
+                        line[0, ptidx] = row
+                        line[1, ptidx] = col
+                        ptidx += 1
+                ax.scatter(line[1], line[0], marker='o', color=DISP_COLORSf[idx])
+            ax.set_xlabel("X")
+            ax.set_ylabel("Y")
             for idx, group in enumerate(patchgroups): 
                 print("line %d has %d patches" % (idx, len(group)))
                 numpts, patches = group
@@ -665,17 +686,17 @@ if __name__ == "__main__":
             cv.imshow(assocwin, mergedlinespatchimg)
             # np.save(os.path.join(img_folder, f"img{count}patches"), patchgroups)
 
-        linepts = extract_laser_points(planes, patchgroups, (rowmin, colmin))
+        linepts = extract_laser_points(planes, patchgroups, (0, 0))
         if LaserDetectorStep.PCL in IMG_DISPLAYS:
             pclfig = plt.figure(f"points{count}")
-            ax = pclfig.add_subplot(projection="3d")
+            ax = pclfig.add_subplot()#projection="3d")
             ax.set_title(f"points{count}")
             for idx, line in enumerate(linepts): 
                 print(f"line {idx} has {len(line)} points")
-                ax.scatter(line[:,0], line[:,1], line[:,2], marker='o', color=DISP_COLORSf[idx])
+                ax.scatter(line[0], line[1], marker='o', color=DISP_COLORSf[idx])
             ax.set_xlabel("X")
             ax.set_ylabel("Y")
-            ax.set_zlabel("Z")
+            # ax.set_zlabel("Z")
             # np.save(os.path.join(img_folder, f"img{count}points"), linepts)
 
         if DEBUG_MODE:
