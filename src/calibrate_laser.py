@@ -24,7 +24,6 @@ def verify_planes(planes, imgpoints):
     linepts = np.empty((0,3))
     for i, planeimgpoints in enumerate(imgpoints):
         pts3d = np.empty((len(planeimgpoints),3))
-        print(type(planeimgpoints))
         for j, pt in enumerate(planeimgpoints):
             pts3d[j] = px_2_3d(pt[1], pt[0], planes[i], ZedMini.LeftRectHD2K.K)
         linepts = np.append(linepts, pts3d, axis=0)

@@ -6,7 +6,7 @@ import time
 import numpy as np
 from numba import cuda # if cuda is not available, should set variable NUMBA_CUDA_SIM = 1 in terminal
 from PIL import Image
-from helpers import DISP_COLORS, DISP_COLORSf, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
+from helpers import px_2_3d, DISP_COLORS, DISP_COLORSf, maximumSpanningTree, angle_wrap, merge_polar_lines, draw_polar_lines
 import cv2 as cv
 import sys
 import matplotlib.pyplot as plt
@@ -459,29 +459,22 @@ def extract_laser_points(planes_normal_form, patchgroups, px_coord_offset=(0,0))
 
     img - OpenCV Mat or otherwise compatible arraylike
     '''
+    
     linepts = []
     for idx, patchgroup in enumerate(patchgroups):
-        c_x, c_y, f_x, f_y = ZedMini.LeftRectHD2K.P[0,2], ZedMini.LeftRectHD2K.P[1,2], ZedMini.LeftRectHD2K.P[0,0], ZedMini.LeftRectHD2K.P[1,1]
-        a, b, c, d = planes_normal_form[idx] # the planes will be always be ordered by distance from origin
+        # c_x, c_y, f_x, f_y = ZedMini.LeftRectHD2K.P[0,2], ZedMini.LeftRectHD2K.P[1,2], ZedMini.LeftRectHD2K.P[0,0], ZedMini.LeftRectHD2K.P[1,1]
+        # a, b, c, d = planes_normal_form[idx] # the planes will be always be ordered by distance from origin
         numpts, patches = patchgroup
         ptarr = np.empty((3,numpts))
         ptarridx = 0
         for patch in patches:
             for px in patch:
-                v, u, offset = px # row, col, 
-                v += px_coord_offset[0] + offset
-                u += px_coord_offset[1]
-                x = (u - c_x) / f_x
-                y = (v - c_y) / f_y
-                t = - d / (a * x + b * y + c)
-                x *= t
-                y *= t
-                z = t
-                ptarr[0, ptarridx] = y # row
-                ptarr[1, ptarridx] = x # col
-                ptarr[2, ptarridx] = z 
-
-                # ptarr[ptarridx,:] = x, y, z
+                row, col, coloffset = px
+                ptarr[:, ptarridx] = px_2_3d(
+                    row + px_coord_offset[0],
+                    col + px_coord_offset[1] + coloffset, 
+                    planes_normal_form[idx], 
+                    ZedMini.LeftRectHD2K.P)
                 ptarridx += 1
         linepts.append(ptarr)
     return linepts
@@ -537,6 +530,7 @@ if __name__ == "__main__":
     
     
     laserplanes = np.load(os.path.join(curdir, img_folder, "Camera_Relative_Laser_Planes.npy"), allow_pickle=True)
+    print(laserplanes)
     planes = [
         (u, v, w, -u*x -v*y -w*z) 
         for x,y,z,u,v,w in laserplanes
@@ -565,7 +559,7 @@ if __name__ == "__main__":
             centroid[1] + 0.5,
         ])
         X, Y = np.meshgrid(x,y)
-        f = lambda x, y : (D - A*x - B*y) / C
+        f = lambda x, y : (-D - A*x - B*y) / C
         Z = f(X,Y)
 
         ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
@@ -686,17 +680,18 @@ if __name__ == "__main__":
             cv.imshow(assocwin, mergedlinespatchimg)
             # np.save(os.path.join(img_folder, f"img{count}patches"), patchgroups)
 
-        linepts = extract_laser_points(planes, patchgroups, (0, 0))
+        linepts = extract_laser_points(planes, patchgroups, (rowmin, colmin))
         if LaserDetectorStep.PCL in IMG_DISPLAYS:
             pclfig = plt.figure(f"points{count}")
-            ax = pclfig.add_subplot()#projection="3d")
+            ax = pclfig.add_subplot(projection="3d")
             ax.set_title(f"points{count}")
             for idx, line in enumerate(linepts): 
                 print(f"line {idx} has {len(line)} points")
-                ax.scatter(line[0], line[1], marker='o', color=DISP_COLORSf[idx])
+                print(line.shape)
+                ax.scatter(line[0], line[1], line[2], marker='o', color=DISP_COLORSf[idx])
             ax.set_xlabel("X")
             ax.set_ylabel("Y")
-            # ax.set_zlabel("Z")
+            ax.set_zlabel("Z")
             # np.save(os.path.join(img_folder, f"img{count}points"), linepts)
 
         if DEBUG_MODE:
