@@ -9,7 +9,7 @@ DISP_COLORS = [ #BGR
     (255,255,0), # cyan
     (255,0,255), # magenta
     (0,255,255), # yellow
-    (255,255,255), # white
+    (255,160,122), # light salmon
     (180,0,0), # dark blue
     (0,180,0), # forest green
     (0,0,180), # crimson
@@ -27,7 +27,7 @@ DISP_COLORSf = [ #BGR
     (1,1,0), # cyan
     (1,0,1), # magenta
     (0,1,1), # yellow
-    (1,1,1), # white
+    (1,.627,.478), # white
     (.7,0,0), # dark blue
     (0,.7,0), # forest green
     (0,0,.7), # crimson

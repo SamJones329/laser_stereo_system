@@ -36,6 +36,7 @@ IMG_DISPLAYS = [
 ]
 TIMED_STEPS = []
 DEBUG_MODE = True
+MAX_TEST_IMGS = 1
 
 # if cupy not available (i.e. system w/out nvidia GPU), use numpy
 try:
@@ -50,8 +51,8 @@ except:
     maxthreadsperblock2d = math.floor(math.sqrt(1024))
 
 # Constants, should move these to param yaml file if gonna use with ROS
-DEFAULT_COLOR_WEIGHTS = (0.12, 0.85, 0.18)
-DEFAULT_GVAL_MIN_VAL = 2010.
+DEFAULT_COLOR_WEIGHTS = (0.12, 0.85, 0.18) # RGB
+DEFAULT_GVAL_MIN_VAL = 2010.#1859.
 DEFAULT_ROI = ((0.1, 0.25), (0.9, 0.75)) # region of interest defined as (tl, tr) where tl and tr as defined by (height%, width%)
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
 NUM_LASER_LINES = 15
@@ -113,13 +114,17 @@ def calculate_gaussian_integral_windows(img) -> cuda.devicearray:
     return output_global_mem
 
 @cuda.jit
-def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_center, output):
+def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_center, output, centerpx):
     row, col = cuda.grid(2)
     # center of window
     center = row + offset_from_winstart_to_center
     if not (0 < row < ln_reward.shape[0]-1 and 0 < col < ln_reward.shape[1]-1) or gvals[row,col] < minval: 
         return
     else:    
+        if gvals[row, col] >= 2048 and gvals[row, col-1] >= 2048 and gvals[row, col+1] >= 2048 and centerpx[0] == 0:
+            centerpx[0] = row
+            centerpx[1] = col
+
         # ln(f(x)), ln(f(x-1)), ln(f(x+1))
         lnfx = ln_reward[center, col]
         lnfxm = ln_reward[center-1, col]
@@ -157,10 +162,12 @@ def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray, min
             d_ln_reward[d_ln_reward == cupy.nan] = 0
             d_ln_reward[abs(d_ln_reward) == cupy.inf] = 0
     output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
-    find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, min_gval, offset_from_winstart_to_center, output_global_mem)
+    centerpx_global_mem = cuda.to_device(np.zeros(2, dtype=int))
+    find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, min_gval, offset_from_winstart_to_center, output_global_mem, centerpx_global_mem)
     output = output_global_mem.copy_to_host()
+    centerpx = centerpx_global_mem.copy_to_host()
 
-    return output
+    return output, centerpx
 
 @timeitstep(LaserDetectorStep.SUBPX)
 def find_gval_subpixels(gvals, reward_img):
@@ -362,7 +369,7 @@ SEGMENT_HOUGH_LINES_P = 0
 SEGMENT_HOUGH_LINES = 1
 SEGMENT_MAX_SPAN_TREE = 2
 @timeitstep(LaserDetectorStep.SEGMENT)
-def segment_laser_lines(img, segment_mode, patches=None):
+def segment_laser_lines(img, segment_mode, patches=None, centerdot=None):
     if segment_mode == SEGMENT_HOUGH_LINES_P:
         lines = cv.HoughLinesP(laserpxbinary, 1, np.pi / 180, threshold=100, minLineLength=100, maxLineGap=5)
         print(lines)
@@ -408,81 +415,251 @@ def segment_laser_lines(img, segment_mode, patches=None):
         # traversing the graph forwards and backwards.
 
         # create pixel groups
-        groups = []
-        numgroups = len(groups)
-        graph = {}
+        numpatches = len(patches)
+        graph = np.full((numpatches, numpatches), -sys.maxsize, dtype=int)
+        dirgraph = np.full((numpatches, numpatches), False, dtype=bool)
+        
+        leftwardgraph = {}
+        rightwardgraph = {}
         origins = set()
         edges: list = []
-        patchmembers = [{"rows": set(), "cols": set(), "mincol": 99999999, "maxcol": -1} for _ in range(len(patches))]
+        patchmembers = [{"rows": set(), "cols": set(), "mincol": 99999999} for _ in range(len(patches))]
+        centerpatch = -1
         for i, patch in enumerate(patches):
-            pxs = ""
             for px in patch:
+                if px[0] == centerpx[0] and px[1] == centerpx[1]:
+                    centerpatch = i
                 patchmembers[i]["rows"].add(px[0])
                 patchmembers[i]["cols"].add(px[1])
                 patchmembers[i]["mincol"] = min(patchmembers[i]["mincol"], px[1])
-                # patchmembers[i]["mincol"] = max(patchmembers[i]["maxcol"], px[1])
-                # pxs += (", %d" % patchmembers[i]["mincol"]) 
-                graph[i] = set()
+                leftwardgraph[i] = set()
+                rightwardgraph[i] = set()
                 origins.add(i)
-            # print(pxs)
-            # print()
 
         for i, patch in enumerate(patches):
-            minnext = -1
             for j, otherpatch in enumerate(patches):
-                # print(i,j)
                 # print(patchmembers[j]["mincol"], patchmembers[i]["mincol"])
                 if patchmembers[j]["mincol"] > patchmembers[i]["mincol"]:
                     # print("candidate")
-                    rowshare = set()
+                    sharedrows = set()
                     for px in patch:
-                        if px[0] not in patchmembers[j]["rows"] or px[0] in rowshare: continue
+                        if px[0] not in patchmembers[j]["rows"] or px[0] in sharedrows: continue
                         r, c, _ = px
-                        c += 1
-                        while img[r,c] == 0:
-                            c += 1
-                        if c in patchmembers[j]["cols"]:
-                            rowshare.add(r)
-                    rows_shared = len(rowshare)             
-                    if rows_shared > 0:
-                        graph[i].add((j,rows_shared))
-                        edges.append((i, j, rows_shared)) # from, to, weight
-                        if j in origins: origins.remove(j)
+                        nextpatch = c + 1
+                        while c < img.shape[1] and nextpatch - c < 100: 
+                            if img[r,nextpatch] == 0:
+                                nextpatch += 1
+                            else:
+                                if nextpatch in patchmembers[j]["cols"]:
+                                    print(nextpatch - c)
+                                    sharedrows.add(r)
+                                break
+                    num_rows_shared = len(sharedrows)             
+                    if num_rows_shared > 0:
+                        # add edge of weight num_rows_shared from i to j
+                        graph[i,j] = num_rows_shared
+                        dirgraph[i,j] = True # true indicates rightward path
+                        graph[j,i] = num_rows_shared
+                        dirgraph[j,i] = False # false indicates leftward path
+                        leftwardgraph[j].add(i) 
+                        rightwardgraph[i].add(j) 
+                        edges.append((i, j, num_rows_shared)) # left, right, weight
+                        if j in origins: origins.remove(j) # we found an edge that goes to this patch, so its not a source node
 
-        edges.sort(key=lambda x: x[2], reverse=True)
-        visited = set()
-        print(origins)
-        for patchidx in origins:
-            visited.add(patchidx)
-        path = {}
-        traversed = set()
+        def findMaxVertex(visited, weights):
+   
+            # Stores the index of max-weight vertex
+            # from set of unvisited vertices
+            index = -1;
+        
+            # Stores the maximum weight from
+            # the set of unvisited vertices
+            maxW = -sys.maxsize;
+        
+            # Iterate over all possible
+            # Nodes of a graph
+            for i in range(numpatches):
+        
+                # If the current Node is unvisited
+                # and weight of current vertex is
+                # greater than maxW
+                if (visited[i] == False and weights[i] > maxW):
+                
+                    # Update maxW
+                    maxW = weights[i];
+        
+                    # Update index
+                    index = i;
+            return index;
+    
+        # Utility function to find the maximum
+        # spanning tree of graph
+        def printMaximumSpanningTree(graph, parent):
+        
+            # Stores total weight of
+            # maximum spanning tree
+            # of a graph
+            MST = 0;
+        
+            # Iterate over all possible Nodes
+            # of a graph
+            for i in range(1, numpatches):
+            
+                # Update MST
+                MST += graph[i][parent[i]] if graph[i][parent[i]] > 0 else 0;
+        
+            print("Weight of the maximum Spanning-tree ", MST);
+            print();
+            print("Edges    Weight");
+        
+            # Print Edges and weight of
+            # maximum spanning tree of a graph
+            for i in range(1, numpatches):
+                print(f"{parent[i]:02} - {i:02}    {graph[i][parent[i]]:02}");
+        
+        # Function to find the maximum spanning tree
+        def maximumSpanningTree(graph):
+            # visited[i]:Check if vertex i
+            # is visited or not
+            # initialize visited of a Node as False
+            visited = np.full(numpatches, False, dtype=bool)
+
+            # parent[i]: Stores the parent Node
+            # of vertex i
+            parent = np.full(numpatches, centerpatch, dtype=int)
+            
+            # weights[i]: Stores maximum weight of
+            # graph to connect an edge with i
+            # Initialize weights as -INFINITE,
+            weights = np.full(numpatches, -sys.maxsize, dtype=int)
+        
+            # Include 1st vertex in
+            # maximum spanning tree
+            weights[centerpatch] = sys.maxsize;
+            parent[centerpatch] = -1;
+        
+            # Search for other (V-1) vertices
+            # and build a tree
+            for i in range(numpatches - 1):
+        
+                # Stores index of max-weight vertex
+                # from a set of unvisited vertex
+                maxVertexIndex = findMaxVertex(visited, weights);
+        
+                # Mark that vertex as visited
+                visited[maxVertexIndex] = True;
+        
+                # Update adjacent vertices of
+                # the current visited vertex
+                for j in range(numpatches):
+        
+                    # If there is an edge between j
+                    # and current visited vertex and
+                    # also j is unvisited vertex
+                    if (graph[j][maxVertexIndex] != 0 and visited[j] == False):
+        
+                        # If graph[v][x] is
+                        # greater than weight[v]
+                        if (graph[j][maxVertexIndex] > weights[j]):
+                        
+                            # Update weights[j]
+                            weights[j] = graph[j][maxVertexIndex];
+        
+                            # Update parent[j]
+                            parent[j] = maxVertexIndex;
+        
+            # Print maximum spanning tree
+            printMaximumSpanningTree(graph, parent);
+            linegroups = [[0,[]] for _ in range(NUM_LASER_LINES)]
+
+            path = [[] for _ in range(numpatches)]
+            for i in range(numpatches):
+                if graph[i][parent[i]] > 0:
+                   path[parent[i]].append(i)
+
+            toexplore = [(centerpatch, NUM_LASER_LINES // 2)]
+            while toexplore:
+                patchidx, linegroupidx = toexplore.pop(0)
+                print(linegroupidx)
+                linegroupidx = min(max(0,linegroupidx), 14)
+                linegroups[linegroupidx][1].append(patches[patchidx])
+                linegroups[linegroupidx][0] += len(patches[patchidx])
+                for child in path[patchidx]:
+                    toexplore.append((child, linegroupidx + 1 if dirgraph[patchidx,child] else linegroupidx - 1))
+            return linegroups
+        
+        return maximumSpanningTree(graph)
+
+        # sort by weight descending
+        edges.sort(key=lambda x: x[2], reverse=True) 
+        # indicates which nodes have had edges processed which go to them
+        srcs = set()
+        visited = {centerpatch}
+        
+        # origin nodes are visited automatically
+        # print(f"Origin patch indexes: {origins}")
+        # for patchidx in origins:
+        #     visited.add(patchidx)
+        leftpath = {}
+        rightpath = {}
         numpatches = len(patches)
-        print(numpatches)
+        print(f"MST needs to visit {numpatches} patches")
         count = 0
-        while len(visited) < numpatches:
+        # don't stop until all patches visited
+        while len(visited) < numpatches and edges:
             count += 1
-            src, dst, weight = edges.pop(0)
-            if dst in visited: continue
-            visited.add(dst)
-            path[src] = dst
-        print(count)
-        print(path)
+            left, right, weight = edges.pop(0)
+            if right in visited: continue
+            # srcs.add(src)
+            visited.add(right)
+            if right in leftpath: leftpath[right].append(left)
+            else: leftpath[right] = [left]
+            if left in rightpath: rightpath[left].append(right)
+            else: rightpath[left] = [right]
+        print(f"MST iterations: {count}")
+        print(f"MST has {len(srcs)} source patches")
+        print(f"MST has {len(visited)} visited/dst patches")
+        print(rightpath)
+        print(leftpath)
         linegroups = [[0,[]] for _ in range(NUM_LASER_LINES)]
-        for origin in origins:
-            linegroups[0][1].append(patches[origin])
-            linegroups[0][0] += len(patches[origin])
-            src = origin
-            idx = 1
-            while src in path:
-                idx += 1
-                dst = path[src]
-                linegroups[idx][1].append(patches[dst])
-                linegroups[idx][0] += len(patches[dst])
-                src = dst
+        
+        centerpxlineidx = NUM_LASER_LINES // 2
+        pathed = set()
+        def explore_path(patchidx, linegroupidx, path, graph, lineincrement):
+            linegroups[linegroupidx][1].append(patches[patchidx])
+            linegroups[linegroupidx][0] += len(patches[patchidx])
+            if patchidx in path:
+                for dst in path[patchidx]:
+                    if dst in pathed: continue
+                    if dst not in graph: print(f"{dst} not in graph of {patchidx}")
+                    explore_path(dst, linegroupidx+lineincrement, path, graph, lineincrement)
+        #             if dst in rightwardgraph[patchidx]:
+        #                 print(f"right {linegroupidx} -> {linegroupidx+1}")
+        #                 explore_path(dst, linegroupidx+1)
+        #             elif dst in leftwardgraph[patchidx]:
+        #                 print(f"left {linegroupidx} -> {linegroupidx-1}")
+        #                 explore_path(dst, linegroupidx-1)
+        #             else:
+        #                 print(f"It seems the path was incorrectly constructed with an edge from {patchidx} to {dst}")
+        # print(f"Exploring path starting at center line {centerpxlineidx} from patch {centerpatch}")
+        explore_path(centerpatch, centerpxlineidx, leftpath, leftwardgraph, -1)
+        explore_path(centerpatch, centerpxlineidx, rightpath, rightwardgraph, 1)
+
+
+        # for origin in origins:
+        #     linegroups[0][1].append(patches[origin])
+        #     linegroups[0][0] += len(patches[origin])
+        #     src = origin
+        #     idx = 1
+        #     while src in path:
+        #         idx += 1
+        #         dsts = path[src]
+        #         for dst in dsts:
+        #             linegroups[idx][1].append(patches[dst])
+        #             linegroups[idx][0] += len(patches[dst])
+        #         src = dst
 
         return linegroups
-
-        # mst = maximumSpanningTree(graph)
 
 
 @timeitstep(LaserDetectorStep.ASSOC)
@@ -580,10 +757,10 @@ if __name__ == "__main__":
     curdir = os.getcwd()
     folders = curdir.split('/')
     if folders[-1] == "catkin_ws":
-        img_folder = "src/laser_stereo_system/test_imgs"
+        img_folder = "src/laser_stereo_system/calib_imgs"
         calib_folder = "src/laser_stereo_system/calib_imgs"
     else: 
-        img_folder = "test_imgs"
+        img_folder = "calib_imgs"
         calib_folder = "calib_imgs"
     imgs = []
     cpimgs = []
@@ -593,7 +770,7 @@ if __name__ == "__main__":
             print(f"opening {filename}")
             img = Image.open(os.path.join(img_folder, filename))
             if img is not None:
-                imgs.append(np.asarray(img))
+                imgs.append((filename, np.asarray(img))) # RGB format
                 cpimgs.append(cupy.asarray(img))
                 filenames.append(filename)
     
@@ -642,7 +819,9 @@ if __name__ == "__main__":
 
     imgproctimes = 0
     count = 0
-    for img in imgs:
+    for filename, img in imgs:
+        if count >= MAX_TEST_IMGS: break
+        print(f"Processing image {count}: {filename}")
 
         if DEBUG_MODE:
             start_time = time.perf_counter()
@@ -674,11 +853,13 @@ if __name__ == "__main__":
             cv.imshow(gvalwin, hostgvals / np.max(hostgvals))
             np.save(os.path.join(calib_folder, f"img{count}gvals"), hostgvals)
 
-        subpxs = find_gval_subpixels_gpu(gvals, reward)
+        subpxs, centerpx = find_gval_subpixels_gpu(gvals, reward)
         if LaserDetectorStep.SUBPX in IMG_DISPLAYS:
-            a = subpxs.copy()
-            a[subpxs != 0] = 1
+            a = np.zeros((subpxs.shape[0], subpxs.shape[1], 3))
+            a[subpxs != 0] = 255, 255, 255
             print(f"{np.count_nonzero(a)} subpxs")
+            print(f"centerpx @ {centerpx}")
+            cv.circle(a, (centerpx[1], centerpx[1]), 2, DISP_COLORS[1], thickness=-1)
             subpxwin = f"subpxs {count}"
             cv.namedWindow(subpxwin, cv.WINDOW_NORMAL)
             cv.imshow(subpxwin, a)
@@ -701,9 +882,9 @@ if __name__ == "__main__":
             np.save(os.path.join(calib_folder, f"img{count}bin"), laserpxbinary)
 
         # lines = ...
-        patchgroups = segment_laser_lines(laserpxbinary, SEGMENT_MAX_SPAN_TREE, patches=patches)
+        patchgroups = segment_laser_lines(laserpxbinary, SEGMENT_MAX_SPAN_TREE, patches=patches, centerdot=centerpx)
         if LaserDetectorStep.SEGMENT in IMG_DISPLAYS:
-            print(patchgroups)
+            # print(patchgroups)
             # dispimg = np.copy(roi_img)
             # print("\nLines: ")
             # if lines is not None:
@@ -719,8 +900,8 @@ if __name__ == "__main__":
         # if LaserDetectorStep.ASSOC in IMG_DISPLAYS:
             mergedlinespatchimg = roi_img.copy()
             for idx, group in enumerate(patchgroups): 
-                print("line %d has %d patches" % (idx, len(group)))
                 numpts, patches = group
+                print(f"line {idx} has {len(patches)} patches and {numpts} points")
                 for patch in patches:
                     for pt in patch:
                         row, col, x_offset = pt
@@ -729,7 +910,7 @@ if __name__ == "__main__":
             assocwin = f"assoc{count}"
             cv.namedWindow(assocwin, cv.WINDOW_NORMAL)
             cv.imshow(assocwin, mergedlinespatchimg)
-            np.save(os.path.join(calib_folder, f"img{count}patches"), patchgroups)
+            np.save(os.path.join(calib_folder, f"img{count}patches"), np.array(patchgroups, dtype=object))
 
         linepts = extract_laser_points(planes, patchgroups, (rowmin, colmin))
         if LaserDetectorStep.PCL in IMG_DISPLAYS:
