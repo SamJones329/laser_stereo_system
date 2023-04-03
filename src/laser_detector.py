@@ -51,8 +51,8 @@ except:
     maxthreadsperblock2d = math.floor(math.sqrt(1024))
 
 # Constants, should move these to param yaml file if gonna use with ROS
-DEFAULT_COLOR_WEIGHTS = (0.12, 0.85, 0.18) # RGB
-DEFAULT_GVAL_MIN_VAL = 2010.#1859.
+DEFAULT_COLOR_WEIGHTS = (0.12,0.85,.12)#(0.12, 0.85, 0.18) # RGB
+DEFAULT_GVAL_MIN_VAL = 1910#2010.#1859.
 DEFAULT_ROI = ((0.1, 0.25), (0.9, 0.75)) # region of interest defined as (tl, tr) where tl and tr as defined by (height%, width%)
 WINLEN = 5 # works for 1080p and 2.2k for Zed mini
 NUM_LASER_LINES = 15
@@ -124,6 +124,11 @@ def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_
         if gvals[row, col] >= 2048 and gvals[row, col-1] >= 2048 and gvals[row, col+1] >= 2048 and centerpx[0] == 0:
             centerpx[0] = row
             centerpx[1] = col
+
+        # TODO if abs(offset) >= 1, move the pixel the offset is relative to 
+        # correspondingly subtracting the offset until the abs(offset) < 1. If 
+        # new pixel comes along that lands in there that has to travel less from its offset, 
+        # use the new pixel instead
 
         # ln(f(x)), ln(f(x-1)), ln(f(x+1))
         lnfx = ln_reward[center, col]
@@ -245,6 +250,8 @@ def throw_out_small_patches_gpu(subpixel_offsets):
     gpu_patch[blockspergrid, threadsperblock](d_arr, sys.float_info.min, output_global_mem)
     # return output_global_mem
     output = output_global_mem.copy_to_host()
+
+    # TODO figure out why seemingly good patches are being thrown out
 
     # merge
     goodblockpatches = []
@@ -450,8 +457,8 @@ def segment_laser_lines(img, segment_mode, patches=None, centerdot=None):
                             if img[r,nextpatch] == 0:
                                 nextpatch += 1
                             else:
-                                if nextpatch in patchmembers[j]["cols"]:
-                                    print(nextpatch - c)
+                                if nextpatch - c > 10 and nextpatch in patchmembers[j]["cols"]:
+                                    # print(nextpatch - c)
                                     sharedrows.add(r)
                                 break
                     num_rows_shared = len(sharedrows)             
@@ -589,77 +596,6 @@ def segment_laser_lines(img, segment_mode, patches=None, centerdot=None):
             return linegroups
         
         return maximumSpanningTree(graph)
-
-        # sort by weight descending
-        edges.sort(key=lambda x: x[2], reverse=True) 
-        # indicates which nodes have had edges processed which go to them
-        srcs = set()
-        visited = {centerpatch}
-        
-        # origin nodes are visited automatically
-        # print(f"Origin patch indexes: {origins}")
-        # for patchidx in origins:
-        #     visited.add(patchidx)
-        leftpath = {}
-        rightpath = {}
-        numpatches = len(patches)
-        print(f"MST needs to visit {numpatches} patches")
-        count = 0
-        # don't stop until all patches visited
-        while len(visited) < numpatches and edges:
-            count += 1
-            left, right, weight = edges.pop(0)
-            if right in visited: continue
-            # srcs.add(src)
-            visited.add(right)
-            if right in leftpath: leftpath[right].append(left)
-            else: leftpath[right] = [left]
-            if left in rightpath: rightpath[left].append(right)
-            else: rightpath[left] = [right]
-        print(f"MST iterations: {count}")
-        print(f"MST has {len(srcs)} source patches")
-        print(f"MST has {len(visited)} visited/dst patches")
-        print(rightpath)
-        print(leftpath)
-        linegroups = [[0,[]] for _ in range(NUM_LASER_LINES)]
-        
-        centerpxlineidx = NUM_LASER_LINES // 2
-        pathed = set()
-        def explore_path(patchidx, linegroupidx, path, graph, lineincrement):
-            linegroups[linegroupidx][1].append(patches[patchidx])
-            linegroups[linegroupidx][0] += len(patches[patchidx])
-            if patchidx in path:
-                for dst in path[patchidx]:
-                    if dst in pathed: continue
-                    if dst not in graph: print(f"{dst} not in graph of {patchidx}")
-                    explore_path(dst, linegroupidx+lineincrement, path, graph, lineincrement)
-        #             if dst in rightwardgraph[patchidx]:
-        #                 print(f"right {linegroupidx} -> {linegroupidx+1}")
-        #                 explore_path(dst, linegroupidx+1)
-        #             elif dst in leftwardgraph[patchidx]:
-        #                 print(f"left {linegroupidx} -> {linegroupidx-1}")
-        #                 explore_path(dst, linegroupidx-1)
-        #             else:
-        #                 print(f"It seems the path was incorrectly constructed with an edge from {patchidx} to {dst}")
-        # print(f"Exploring path starting at center line {centerpxlineidx} from patch {centerpatch}")
-        explore_path(centerpatch, centerpxlineidx, leftpath, leftwardgraph, -1)
-        explore_path(centerpatch, centerpxlineidx, rightpath, rightwardgraph, 1)
-
-
-        # for origin in origins:
-        #     linegroups[0][1].append(patches[origin])
-        #     linegroups[0][0] += len(patches[origin])
-        #     src = origin
-        #     idx = 1
-        #     while src in path:
-        #         idx += 1
-        #         dsts = path[src]
-        #         for dst in dsts:
-        #             linegroups[idx][1].append(patches[dst])
-        #             linegroups[idx][0] += len(patches[dst])
-        #         src = dst
-
-        return linegroups
 
 
 @timeitstep(LaserDetectorStep.ASSOC)
@@ -880,6 +816,15 @@ if __name__ == "__main__":
             cv.namedWindow(binwin, cv.WINDOW_NORMAL)
             cv.imshow(binwin, laserpxbinary)
             np.save(os.path.join(calib_folder, f"img{count}bin"), laserpxbinary)
+            
+            patchimg = np.zeros(laserpxbinary.shape)
+            for patch in patches:
+                for px in patch:
+                    patchimg[px[0], px[1]] = 1
+            patchwin = f"patch{count}"
+            cv.namedWindow(patchwin, cv.WINDOW_NORMAL)
+            cv.imshow(patchwin, patchimg)
+
 
         # lines = ...
         patchgroups = segment_laser_lines(laserpxbinary, SEGMENT_MAX_SPAN_TREE, patches=patches, centerdot=centerpx)

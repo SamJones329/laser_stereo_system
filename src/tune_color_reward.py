@@ -8,7 +8,6 @@ WIN_NAME = "Tune Color Reward"
 
 gval_thresh = 1859#2010
 weights = (0.18, 0.85, 0.12) # (k_b, k_g, k_r) (249, 255, 249) 254 255 251
-display_scale_factor = 0.5
 
 def reward(img):
     global weights
