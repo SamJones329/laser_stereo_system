@@ -1,8 +1,9 @@
 <launch>
 
-    <arg name="size" default="8x6" />
-    <arg name="square" default="0.0224" />
-    <arg name="folder" default="$(find laser_stereo_system)/calib_imgs" />
+    <arg name="size" default="8x6" /> <!--shiny one is 6x9, matte on is 8x6-->
+    <arg name="square" default="0.0224" /> <!--shiny one is , matte one is 0.0224m-->
+
+    <arg name="folder" default="$(find laser_stereo_system)/calib_imgs/set2" />
 
     <!-- RViz -->
     <node pkg="rviz" type="rviz" name="rviz" args="-d $(find laser_stereo_system)/config/laser_calib.rviz" output="screen"/>
@@ -10,7 +11,7 @@
     <!-- Calibration Node -->
     <node 
         pkg="laser_stereo_system" 
-        type="calibrate_laser.py" 
+        type="calibrate_laser_ros.py" 
         name="calibrate_laser" 
         output="screen"
         args="-s $(arg size) -q $(arg square) -f $(arg folder)"
