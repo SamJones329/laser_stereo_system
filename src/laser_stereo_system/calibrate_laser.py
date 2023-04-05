@@ -13,7 +13,11 @@ import math
 from datetime import datetime as dt
 import matplotlib.pyplot as plt
 
-DEFAULT_IMG_FOLDERS = []
+DEFAULT_IMG_DATA = [
+    ("calib_imgs/set1", 0.0224, (8,6)), 
+    ("calib_imgs/set2", 0, (6,9)), 
+    ("calib_imgs/set3", 0, (6,9)), 
+    ("calib_imgs/set4", 0, (6,9))]
 
 
 def throw_out_outlier_clusters(img, gvals):
@@ -316,8 +320,7 @@ def main(
 if __name__ == "__main__":
     numargs = len(sys.argv)
     if numargs == 0:
-        pass
+        main(DEFAULT_IMG_DATA, debug=True, record_data=True)
     elif numargs % 3 != 0:
         log_err("Incorrect number of command line arguments. Either pass none to use default arguments or pass 3 arguments for each set of calibration images in the following form: <relative_path_to_folder> <calibration_chessboard_square_size_m> <calibration_chessboard_interior_dimensions>", True, ValueError("Bad command line arguments"))
-    filename = sys.argv[1]
-    main()
+    # main()
