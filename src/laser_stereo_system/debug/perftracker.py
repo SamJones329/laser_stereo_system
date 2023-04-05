@@ -48,8 +48,13 @@ class PerfTracker:
         return track_decorator
     
     def export_to_csv(name=None):
-        if name:
-            pass
+        if name is not None:
+            value = PerfTracker.tracking_data[value]
+            funcdata = np.array(value["runtimes"])
+            funcdata = np.append(funcdata, np.array(value["maxmems"]))
+            pd.DataFrame(funcdata).to_csv(f"perfdata_{key}.csv")
+            return
+        
         flatteneddata = {}
         for key, value in PerfTracker.tracking_data.items():
             funcdata = np.array(value["runtimes"])

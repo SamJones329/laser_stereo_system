@@ -2,7 +2,7 @@ import numpy as np
 from enum import Enum
 
 class Logging:
-    class LogLevels(Enum):
+    class LogLevels:
         ERR = 1
         WARN = 2
         INFO = 3
@@ -10,6 +10,7 @@ class Logging:
 
     class PrintCodes:
         HEADER = '\033[95m'
+        INFOWHITE = '\033[97m'
         OKBLUE = '\033[94m'
         OKCYAN = '\033[96m'
         OKGREEN = '\033[92m'
@@ -18,6 +19,7 @@ class Logging:
         ENDC = '\033[0m'
         BOLD = '\033[1m'
         UNDERLINE = '\033[4m'
+        NOUNDERLINE = '\033[24m'
 
 class ImageDisplay:
     DISP_COLORS = [ #BGR
@@ -50,11 +52,13 @@ class ImageDisplay:
         (0,.7,0), # forest green
         (0,0,.7), # crimson
         (.7,.7,0), # turquoise
-        (.7,0,.7), # purple
+        (.7,0,.7), # purple 
         (0,.7,.7), # wheat
         (.7,.7,.7), # gray
         (1,.7,.4), # cerulean
     ]
+    SHOW_ALL_IMGS = True
+    DEBUG = True
 
 class LaserCalibration:
     MERGE_HLP_LINE_DIST_THRESH = 20

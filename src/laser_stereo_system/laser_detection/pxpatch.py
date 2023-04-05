@@ -1,4 +1,3 @@
-from typing import Tuple
 import numpy as np
 from numba import cuda
 from laser_detection import maxthreadsperblock2d
@@ -94,7 +93,7 @@ def gpu_patch(img, minval, out):
     out[outrow, outcol, 0] = pxs
 
 @PerfTracker.track("patch_gpu")
-def throw_out_small_patches_gpu(subpixel_offsets) -> Tuple[np.ndarray, list[list[Tuple(int,int,float)]]]:
+def throw_out_small_patches_gpu(subpixel_offsets) -> tuple[np.ndarray, list[list[tuple[int,int,float]]]]:
     threadsperblock = (maxthreadsperblock2d // 2, maxthreadsperblock2d // 2)# (16,16) # thread dims multiplied must not exceed max threads per block
     # we want each thread to have a 7x7 area to go over. we don't have 
     # to worry about going all the way to the edge since there won't be 

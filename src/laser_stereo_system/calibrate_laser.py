@@ -11,13 +11,15 @@ from laser_stereo_system.laser_detection import color_reward, gval, pxpatch, sub
 from laser_stereo_system.util import mathutil
 import math
 from datetime import datetime as dt
+from laser_stereo_system.debug.perftracker import PerfTracker
+from laser_stereo_system.debug.debugshow import debugshow
 import matplotlib.pyplot as plt
 
 DEFAULT_IMG_DATA = [
     ("calib_imgs/set1", 0.0224, (8,6)), 
-    ("calib_imgs/set2", 0, (6,9)), 
-    ("calib_imgs/set3", 0, (6,9)), 
-    ("calib_imgs/set4", 0, (6,9))]
+    ("calib_imgs/set2", 0.02909, (6,9)), 
+    ("calib_imgs/set3", 0.02909, (6,9)), 
+    ("calib_imgs/set4", 0.02909, (6,9))]
 
 
 def throw_out_outlier_clusters(img, gvals):
@@ -41,7 +43,6 @@ def throw_out_outlier_clusters(img, gvals):
     # center of image as a heuristic to judge it this will only be 
     # relevant if the laser is relatively nearly coaxial with the 
     # camera (similar angle, small translation)
-    clusters = [A,B,C]
     goodclusters = []
     img_center = (img.shape[1]//2, img.shape[0]//2)
     quarter_x = img.shape[1]//4
@@ -114,11 +115,10 @@ def imagept_laserplane_assoc(patches, polarlines):
             patchgroups[bestline][0] += len(patch)
     return patchgroups
 
-def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: Tuple[int,int], gpu=False, debug=False):
+def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tuple[int,int], gpu=False):
     Pts3d = [[] for _ in range(LaserDetection.NUM_LASER_LINES)] # 3D pts
-    for imgidx, img in enumerate(imgs):
-        log_info(f"Processing image {imgidx}")
-
+    for imgidx, (filename, img) in enumerate(imgs):
+        log_header(f"Processing image {imgidx}: {filename}")
         ####### Finding Chessboard #######
 
         mtx = ZedMini.LeftRectHD2K.K
@@ -135,11 +135,11 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: Tup
         objp[:,:2] = np.mgrid[0:chessboard_dims[0],0:chessboard_dims[1]].T.reshape(-1,2) 
         objp *= square_size_m 
 
-        # scale axes to be in appropriate coords as well
-        axis = np.float32([[3,0,0], [0,3,0], [0,0,-3]]).reshape(-1,3) * square_size_m
-
-        gray = cv.cvtColor(img, cv.COLOR_BGR2GRAY)
+        gray = np.empty((img.shape[0], img.shape[1]), dtype=np.uint8)
+        cv.cvtColor(src=img, code=cv.COLOR_BGR2GRAY, dst=gray, dstCn=1)
         ret, corners = cv.findChessboardCorners(gray, chessboard_dims)
+
+        debugshow(gray, "Gray")
 
         if not ret:
             log_warn(f"Couldn't find chessboard, discarding image {imgidx}...")
@@ -149,7 +149,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: Tup
         # find rotation and translation vectors
         ret, rvec, tvec = cv.solvePnP(objp, corners2, mtx, dist)
 
-        rotmat, jac = cv.Rodrigues(rvec)
+        rotmat, _ = cv.Rodrigues(rvec)
         # world (chessboard) reference frame to camera reference frame transformation matrix
         world2cam = np.identity(4)
         world2cam[:3,:3] = rotmat
@@ -180,6 +180,10 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: Tup
             gvals = gval.calculate_gaussian_integral_windows(reward)
 
 
+        debugshow(reward / np.max(reward), "Reward")
+        gval_host = gvals.copy_to_host()
+        debugshow(gval_host / np.max(gval_host), "Gvals")
+        cv.waitKey(0)
         gvals = throw_out_outlier_clusters(img, gvals)
         if gvals is None: continue
 
@@ -257,7 +261,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: Tup
         log_info(planes)
         np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes) 
 
-        if debug:
+        if ImageDisplay.DEBUG:
             stdplanes = [
                 (u, v, w, -u*x -v*y -w*z) 
                 for x,y,z,u,v,w in planes
@@ -298,11 +302,9 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: Tup
             ax.plot_surface(x * 0.25, y * 0.25, z * 0.25, cmap=plt.cm.YlGnBu_r)
 
 
-
-        
-
 def main(
-        calibration_img_info: list[Tuple[str, float, Tuple[int,int]]], *, debug=False, record_data=False):
+        calibration_img_info: list[tuple[str, float, tuple[int,int]]], 
+        *, gpu=False, record_data=False):
     for img_folder, square_size_m, chessboard_dims in calibration_img_info:
         imgs = []
         cpimgs = []
@@ -315,12 +317,22 @@ def main(
                     imgs.append((filename, np.asarray(img))) # RGB format
                     cpimgs.append(cupy.asarray(img))
                     filenames.append(filename)
-        calibrate(imgs)
+        calibrate(imgs, square_size_m, chessboard_dims, gpu=gpu)
+
 
 if __name__ == "__main__":
-    numargs = len(sys.argv)
+    numargs = len(sys.argv) - 1
     if numargs == 0:
-        main(DEFAULT_IMG_DATA, debug=True, record_data=True)
+        main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
+        main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
+        PerfTracker.export_to_csv()
     elif numargs % 3 != 0:
-        log_err("Incorrect number of command line arguments. Either pass none to use default arguments or pass 3 arguments for each set of calibration images in the following form: <relative_path_to_folder> <calibration_chessboard_square_size_m> <calibration_chessboard_interior_dimensions>", True, ValueError("Bad command line arguments"))
-    # main()
+        log_err(
+            '''Incorrect number of command line arguments. Either pass none 
+            to use default arguments or pass 3 arguments for each set of 
+            calibration images in the following form: <relative_path_to_folder> 
+            <calibration_chessboard_square_size_m> 
+            <calibration_chessboard_interior_dimensions>''', 
+            True, ValueError("Bad command line arguments"))
+    else:
+        pass
