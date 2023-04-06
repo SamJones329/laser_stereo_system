@@ -89,6 +89,7 @@ dependencies:
   - openssl=3.1.0=h03a7124_0
   - p11-kit=0.24.1=h29577a5_0
   - packaging=23.0=pyhd8ed1ab_0
+  - pandas=2.0.0=py310h2b830bf_0
   - pcre2=10.40=hb34f9b4_0
   - pillow=9.4.0=py310h07496d3_2
   - pip=23.0.1=pyhd8ed1ab_0
@@ -98,7 +99,9 @@ dependencies:
   - pyparsing=3.0.9=pyhd8ed1ab_0
   - python=3.10.10=h3ba56d0_0_cpython
   - python-dateutil=2.8.2=pyhd8ed1ab_0
+  - python-tzdata=2023.3=pyhd8ed1ab_0
   - python_abi=3.10=3_cp310
+  - pytz=2023.3=pyhd8ed1ab_0
   - readline=8.2=h92ec313_1
   - setuptools=67.6.1=pyhd8ed1ab_0
   - six=1.16.0=pyh6c4a22f_0

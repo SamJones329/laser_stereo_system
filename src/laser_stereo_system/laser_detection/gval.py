@@ -1,9 +1,9 @@
 from numba import cuda
 from laser_detection import maxthreadsperblock2d
 import math
-from laser_stereo_system.constants import LaserDetection
+from constants import LaserDetection
 import numpy as np
-from laser_stereo_system.debug.perftracker import PerfTracker
+from debug.perftracker import PerfTracker
 
 WINLEN = LaserDetection.GVAL_WINLEN
 
@@ -16,7 +16,8 @@ def gpu_gvals(img, out):
         for row in range(winstartrow, winstartrow+WINLEN):
             G += (1 - 2*abs(winstartrow - row + (WINLEN - 1) / 2)) * img[row, winstartcol] #idk if this last part is right
         G *= -1 # TODO figure out why have to do this
-        out[winstartrow,winstartcol] = G
+        if G > LaserDetection.DEFAULT_GVAL_MIN_VAL:
+            out[winstartrow,winstartcol] = G
 
 @PerfTracker.track("gval_gpu")
 def calculate_gaussian_integral_windows_gpu(reward_img) -> cuda.devicearray:
@@ -51,11 +52,11 @@ def calculate_gaussian_integral_windows(reward_img) -> np.ndarray:
             G = 0
             for row in range(winstart, winstart+WINLEN):
                 G += (1 - 2*abs(winstart - row + (WINLEN - 1) / 2)) * reward_img[row,col] #idk if this last part is right
-            gvals.append((col, winstart+WINLEN//2, G))
+            if -G >= LaserDetection.DEFAULT_GVAL_MIN_VAL:
+                gvals.append((col, winstart+WINLEN//2, -G))
     
-
+    # gvals.sort(key=lambda x: x[2])
+    # num_lines = 15
+    # expectedgoodgvals = int(rows * num_lines * 1.6)#1.4) # room for plenty of outliers
+    # gvals = gvals[:expectedgoodgvals]
     return np.array(gvals)
-    gvals.sort(key=lambda x: x[2])
-    num_lines = 15
-    expectedgoodgvals = int(rows * num_lines * 1.6)#1.4) # room for plenty of outliers
-    gvals = gvals[:expectedgoodgvals]

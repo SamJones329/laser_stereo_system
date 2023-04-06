@@ -1,9 +1,9 @@
 from numba import cuda
 import numpy as np
-from laser_stereo_system.constants import LaserDetection
+from constants import LaserDetection
 from laser_detection import maxthreadsperblock2d, cupy
 import math
-from laser_stereo_system.debug.perftracker import PerfTracker
+from debug.perftracker import PerfTracker
 
 WINLEN = LaserDetection.GVAL_WINLEN
 
@@ -64,18 +64,17 @@ def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray, min
 
 
 @PerfTracker.track("subpx")
-def find_gval_subpixels(gvals: np.ndarray, reward_img: np.ndarray, dynamic_threshold=False, min_gval=LaserDetection.DEFAULT_GVAL_MIN_VAL):
-     # subpixel detection via Gaussian approximation
+def find_gval_subpixels(gvals: np.ndarray, reward_img: np.ndarray):
+    # subpixel detection via Gaussian approximation
     # delta = 1/2 * ( ( ln(f(x-1)) - ln(f(x+1)) ) / ( ln(f(x-1)) - 2ln(f(x)) + ln(f(x+1)) ) )
     # f(x) = intensity value of particular row at pixel x
     # laser_subpixels = {}
     laser_subpixels = np.full(reward_img.shape, 0.0, dtype=np.float)
-    laser_img = np.full(reward_img.shape, 0.0, dtype=np.float)
+    # laser_img = np.full(reward_img.shape, 0.0, dtype=np.float)
     badoffsets = 0
     for window in gvals:
         # center of window
         x, y = int(window[0]), int(window[1])
-        if dynamic_threshold and gvals[y,x] < min_gval: continue
         # f(x), f(x-1), f(x+1)
         fx = reward_img[y,x]
         fxm = reward_img[y,x-1]
@@ -93,7 +92,9 @@ def find_gval_subpixels(gvals: np.ndarray, reward_img: np.ndarray, dynamic_thres
             subpixel_offset = 0.5 * numer / denom
         if abs(subpixel_offset) > WINLEN//2:
             badoffsets += 1
-        if x + subpixel_offset < 0 or x + subpixel_offset > laser_img.shape[1]: 
+        if x + subpixel_offset < 0 or x + subpixel_offset > laser_subpixels.shape[1]: 
             continue
-        laser_img[y,int(x+subpixel_offset)] = 1.0
+        # laser_img[y,int(x+subpixel_offset)] = 1.0
         laser_subpixels[y,int(x+subpixel_offset)] = (subpixel_offset % 1) + 1e-5
+
+    return laser_subpixels

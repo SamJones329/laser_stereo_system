@@ -1,4 +1,4 @@
-from laser_stereo_system.constants import Logging
+from constants import Logging
 codes = Logging.PrintCodes
 
 def print_ansi(msg: str):

@@ -1,9 +1,10 @@
 import cv2 as cv
+from numpy.typing import ArrayLike
 from constants import ImageDisplay
 
 names_shown = {}
 
-def debugshow(img, name):
+def debugshow(img: ArrayLike, name: str):
     if ImageDisplay.DEBUG:
         if name in names_shown:
             if ImageDisplay.SHOW_ALL_IMGS:

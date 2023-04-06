@@ -1,18 +1,17 @@
 import numpy as np
-from laser_detection import cupy
+from laser_detection import cupy, color_reward, gval, pxpatch, subpx
 import os
 from PIL import Image
-from laser_stereo_system.debug.fancylogging import *
+from debug.fancylogging import *
 from constants import ZedMini, LaserDetection, LaserCalibration, ImageDisplay
 import cv2 as cv
 from typing import Tuple
 import sys
-from laser_stereo_system.laser_detection import color_reward, gval, pxpatch, subpx
-from laser_stereo_system.util import mathutil
+from util import mathutil
 import math
 from datetime import datetime as dt
-from laser_stereo_system.debug.perftracker import PerfTracker
-from laser_stereo_system.debug.debugshow import debugshow
+from debug.perftracker import PerfTracker
+from debug.debugshow import debugshow
 import matplotlib.pyplot as plt
 
 DEFAULT_IMG_DATA = [
@@ -32,6 +31,13 @@ def throw_out_outlier_clusters(img, gvals):
     A = pot_pts[labels.ravel()==0]
     B = pot_pts[labels.ravel()==1]
     C = pot_pts[labels.ravel()==2]
+    clustering_img = img.copy()
+    print("cluster centers")
+    print(centers)
+    for center in centers:
+        x, y = int(center[1]), int(center[0])
+        print("x, y: %d, %d" % (x,y))
+        cv.circle(clustering_img, (x,y), 5, (0,255,0), cv.FILLED)
 
     # decide whether clusters are part of laser lights or not
     # cluster into 3 sections
@@ -43,6 +49,7 @@ def throw_out_outlier_clusters(img, gvals):
     # center of image as a heuristic to judge it this will only be 
     # relevant if the laser is relatively nearly coaxial with the 
     # camera (similar angle, small translation)
+    clusters = [A,B,C]
     goodclusters = []
     img_center = (img.shape[1]//2, img.shape[0]//2)
     quarter_x = img.shape[1]//4
@@ -51,25 +58,62 @@ def throw_out_outlier_clusters(img, gvals):
     miny = img_center[1] - third_y
     maxx = img_center[0] + quarter_x
     maxy = img_center[1] + third_y
-    log_info("ROI(minX,maxX,minY,maxY) = (%d, %d, %d, %d)" % (minx, maxx, miny, maxy))
+    print("ROI(minX,maxX,minY,maxY) = (%d, %d, %d, %d)" % (minx, maxx, miny, maxy))
+    for idx, cluster in enumerate(clusters):
+        for clusterptidx, val in enumerate(cluster):
+            x, y = val
+            x, y = int(x), int(y)
+            cv.circle(clustering_img, (x, y), 2, ImageDisplay.DISP_COLORS[idx], cv.FILLED)
+        center = centers[idx]
+        if minx < center[0] < maxx and miny < center[1] < maxy:
+            goodclusters.append(cluster)
+            print("keeping cluster %d w/ center %f, %f" % (idx, center[0], center[1]))
     
+    goodclustering_img = img.copy()
+    for idx, cluster in enumerate(goodclusters):
+        for clusterptidx, val in enumerate(cluster):
+            x, y = val
+            x, y = int(x), int(y)
+            cv.circle(goodclustering_img, (x, y), 2, ImageDisplay.DISP_COLORS[idx], cv.FILLED)
+    cv.rectangle(goodclustering_img, (minx, miny), (maxx, maxy), (255, 0, 0), 3)
+
     numgoodclusters = len(goodclusters)
     if numgoodclusters == 0:
-        log_warn("No good clusters, discarding image...")
+        print("no good clusters, discarding img")
         return None
     
     oldnumgvals = gvals.shape[0]
-    newgvals = goodclusters[0]
+    gvals = goodclusters[0]
     for i in range(1, numgoodclusters):
-        newgvals = np.append(newgvals, goodclusters[i], axis=0)
+        gvals = np.append(gvals, goodclusters[i], axis=0)
     
-    log_info(f"\nNumber of gvals went from {oldnumgvals} to {newgvals.shape[0]}\n")
+    print("\nnum gvals went from %d to %d\n" % (oldnumgvals, gvals.shape[0]))
+    # debugshow(clustering_img, "clustering")
 
-    return newgvals
+    return gvals
 
-def segmentation(img):
-    lines = cv.HoughLines(img, 1, np.pi / 180, threshold=200, srn=2, stn=2) 
+def segmentation(img, orig):
+    lines = cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2) 
     if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
+
+
+    # hlp_laser_img_disp = orig.copy()
+    # print("\nLines: ")
+    # if lines is not None:
+    #     lines = lines[lines[:, 0].argsort()] 
+    #     for i in range(0, len(lines)):
+    #         print("lines %s" % lines[i])
+    #         rho = lines[i][0]
+    #         theta = lines[i][1]
+    #         a = math.cos(theta)
+    #         b = math.sin(theta)
+    #         x0 = a * rho
+    #         y0 = b * rho
+    #         pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+    #         pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
+    #         cv.line(hlp_laser_img_disp, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
+    # debugshow(hlp_laser_img_disp, "houghlines")
+
 
     # cv.imshow("ulines", draw_polar_lines(orig.copy(), lines))
     mergedlines = mathutil.merge_polar_lines(
@@ -139,8 +183,6 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
         cv.cvtColor(src=img, code=cv.COLOR_BGR2GRAY, dst=gray, dstCn=1)
         ret, corners = cv.findChessboardCorners(gray, chessboard_dims)
 
-        debugshow(gray, "Gray")
-
         if not ret:
             log_warn(f"Couldn't find chessboard, discarding image {imgidx}...")
             continue
@@ -176,14 +218,10 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             reward = color_reward.get_reward_gpu(img)
             gvals = gval.calculate_gaussian_integral_windows_gpu(reward)
         else: 
-            reward = color_reward.get_reward()
+            reward = color_reward.get_reward(img)
             gvals = gval.calculate_gaussian_integral_windows(reward)
 
 
-        debugshow(reward / np.max(reward), "Reward")
-        gval_host = gvals.copy_to_host()
-        debugshow(gval_host / np.max(gval_host), "Gvals")
-        cv.waitKey(0)
         gvals = throw_out_outlier_clusters(img, gvals)
         if gvals is None: continue
 
@@ -198,12 +236,34 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
 
         laserpxbinary = np.zeros(filtered.shape, dtype=np.uint8)
         laserpxbinary[filtered != 0] = 255
-        lines = segmentation(laserpxbinary)
+        lines = segmentation(laserpxbinary, img)
+
+        # debugshow(laserpxbinary, "Laser Pixels")
+
+        # mergedlinesimg = img.copy()
+        # print("\nMerged Lines")
+        # for i in range(0, len(lines)):
+        #     try:
+        #         print("line %s" % lines[i])
+        #         rho = lines[i][0]
+        #         theta = lines[i][1]
+        #         a = math.cos(theta)
+        #         b = math.sin(theta)
+        #         x0 = a * rho
+        #         y0 = b * rho
+        #         pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+        #         pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
+        #         cv.line(mergedlinesimg, pt1, pt2, ImageDisplay.DISP_COLORS[i], 3, cv.LINE_AA)
+        #     except:
+        #         print("bad line (maybe vertical) %s" % lines[i])
+        # debugshow(mergedlinesimg, "Merged Lines")
+        # cv.waitKey(0)
+
         patchgroups = imagept_laserplane_assoc(patches, lines)
         
 
         ####### Extract 3D Points #######
-        for idx, group in enumerate(patchgroups): 
+        for idx, (numpts, group) in enumerate(patchgroups): 
             print("line %d has %d patches" % (idx, len(group)))
             for patch in group:
                 for pt in patch:
@@ -213,93 +273,95 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
                     # PtsImg[idx].append((col + x_offset, row))
         
         ####### Done Extracting 3D Points #######
+    # /for imgidx, img in enumerate(imgs)
+    
 
+    ####### RANSAC Plane Extraction #######
 
-        ####### RANSAC Plane Extraction #######
+    # RANSAC: form M subjects of k points from P
+    planes = []
+    for lineP in Pts3d:
+        potplanes = []
 
-        # RANSAC: form M subjects of k points from P
-        planes = []
-        for lineP in Pts3d:
-            potplanes = []
+        M = 3
+        npLineP = np.array(lineP) # type: np.ndarray
 
-            M = 3
-            npLineP = np.array(lineP) # type: np.ndarray
+        shuffled = npLineP.copy()
+        np.random.shuffle(shuffled)
+        subsets = np.array_split(shuffled, M)
+        for subset in subsets:
+            #1.calculate centroid of points and make points relative to it
+            centroid = subset.mean(axis = 0)
 
-            shuffled = npLineP.copy()
-            np.random.shuffle(shuffled)
-            subsets = np.array_split(shuffled, M)
-            for subset in subsets:
-                #1.calculate centroid of points and make points relative to it
-                centroid = subset.mean(axis = 0)
+            #points relative to centroid
+            subsetRelative = subset - centroid
 
-                #points relative to centroid
-                subsetRelative = subset - centroid
+            #2. calculate the singular value decomposition of the xyzT matrix and get the normal as the last column of u matrix
+            u, s, v = np.linalg.svd(subsetRelative)
+            log_info(f"SVD shapes:\n\tu:{u.shape}\n\t{s.shape}\n\t{v.shape}")
+            normal = v[2]
+            normal = normal / np.linalg.norm(normal)
 
-                #2. calculate the singular value decomposition of the xyzT matrix and get the normal as the last column of u matrix
-                u, s, v = np.linalg.svd(subsetRelative)
-                log_info(f"SVD shapes:\n\tu:{u.shape}\n\t{s.shape}\n\t{v.shape}")
-                normal = v[2]
-                normal = normal / np.linalg.norm(normal)
+            # compute distance sum d_j of all points P to the plane pi_j,L
+            # this distance is the dot product of the vector from the centroid to the point with the normal vector
+            distsum = subsetRelative.dot(normal).sum()
+            potplanes.append((centroid, normal, distsum))
 
-                # compute distance sum d_j of all points P to the plane pi_j,L
-                # this distance is the dot product of the vector from the centroid to the point with the normal vector
-                distsum = subsetRelative.dot(normal).sum()
-                potplanes.append((centroid, normal, distsum))
+    bestplane = potplanes[0]
+    for plane in potplanes:
+        if plane[2] < bestplane[2]:
+            bestplane = plane
+    planes.append(plane[:2]) # we don't need the distance anymore
+    # return plane that fits most points/minimizes distance d_j
 
-        bestplane = potplanes[0]
-        for plane in potplanes:
-            if plane[2] < bestplane[2]:
-                bestplane = plane
-        planes.append(plane[:2]) # we don't need the distance anymore
-        # return plane that fits most points/minimizes distance d_j
+    ####### Done RANSAC Plane Extraction #######
+    
+    planes = np.array(planes)
+    planes = np.reshape(planes, (planes.shape[0], 6))
+    log_info("Planes (centroid, normal)=<X,Y,Z,U,V,W>")
+    log_info(planes)
+    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes) 
 
-        ####### Done RANSAC Plane Extraction #######
-        
-        planes = np.array(planes)
-        planes = np.reshape(planes, (planes.shape[0], 6))
-        log_info("Planes (centroid, normal)=<X,Y,Z,U,V,W>")
-        log_info(planes)
-        np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes) 
+    if ImageDisplay.DEBUG:
+        stdplanes = [
+            (u, v, w, -u*x -v*y -w*z) 
+            for x,y,z,u,v,w in planes
+        ]
+        fig = plt.figure("Calib Planes")
+        ax = fig.add_subplot(projection='3d')
+        ax.set_title('calib planes')
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        for idx, plane in enumerate(stdplanes):
 
-        if ImageDisplay.DEBUG:
-            stdplanes = [
-                (u, v, w, -u*x -v*y -w*z) 
-                for x,y,z,u,v,w in planes
-            ]
-            fig = plt.figure("Calib Planes")
-            ax = fig.add_subplot(projection='3d')
-            ax.set_title('calib planes')
-            ax.set_xlabel("X")
-            ax.set_ylabel("Y")
-            ax.set_zlabel("Z")
-            for idx, plane in enumerate(stdplanes):
+            A, B, C, D = plane
+            centroid = planes[idx, :3]
+            np.linspace(-6, 6, 30)
+            x = np.array([
+                centroid[0] + 0.5,
+                centroid[0] - 0.5,
+                centroid[0] + 0.5,
+                centroid[0] - 0.5
+            ])
+            y = np.array([
+                centroid[1] - 0.5,
+                centroid[1] - 0.5,
+                centroid[1] + 0.5,
+                centroid[1] + 0.5,
+            ])
+            X, Y = np.meshgrid(x,y)
+            f = lambda x, y : (-D - A*x - B*y) / C
+            Z = f(X,Y)
 
-                A, B, C, D = plane
-                centroid = planes[idx, :3]
-                np.linspace(-6, 6, 30)
-                x = np.array([
-                    centroid[0] + 0.5,
-                    centroid[0] - 0.5,
-                    centroid[0] + 0.5,
-                    centroid[0] - 0.5
-                ])
-                y = np.array([
-                    centroid[1] - 0.5,
-                    centroid[1] - 0.5,
-                    centroid[1] + 0.5,
-                    centroid[1] + 0.5,
-                ])
-                X, Y = np.meshgrid(x,y)
-                f = lambda x, y : (-D - A*x - B*y) / C
-                Z = f(X,Y)
-
-                ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
-                                color=ImageDisplay.DISP_COLORSf[idx], edgecolor='none')
-            u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
-            x = np.cos(u) * np.sin(v)
-            y = np.sin(u) * np.sin(v)
-            z = np.cos(v)
-            ax.plot_surface(x * 0.25, y * 0.25, z * 0.25, cmap=plt.cm.YlGnBu_r)
+            ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
+                            color=ImageDisplay.DISP_COLORSf[idx], edgecolor='none')
+        u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
+        x = np.cos(u) * np.sin(v)
+        y = np.sin(u) * np.sin(v)
+        z = np.cos(v)
+        ax.plot_surface(x * 0.25, y * 0.25, z * 0.25, cmap=plt.cm.YlGnBu_r)
+        plt.show()
 
 
 def main(
@@ -323,7 +385,7 @@ def main(
 if __name__ == "__main__":
     numargs = len(sys.argv) - 1
     if numargs == 0:
-        main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
+        # main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
         main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
         PerfTracker.export_to_csv()
     elif numargs % 3 != 0:

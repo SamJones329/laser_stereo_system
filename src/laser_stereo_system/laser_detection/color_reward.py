@@ -1,7 +1,7 @@
-from laser_stereo_system.constants import LaserDetection
+from constants import LaserDetection
 from laser_detection import cupy
 import numpy as np
-from laser_stereo_system.debug.perftracker import PerfTracker
+from debug.perftracker import PerfTracker
 
 @PerfTracker.track("reward")
 

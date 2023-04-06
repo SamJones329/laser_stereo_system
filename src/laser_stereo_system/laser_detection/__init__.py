@@ -1,5 +1,5 @@
 from numba import cuda
-from laser_stereo_system.debug import fancylogging
+from debug import fancylogging
 import math
 try:
     import cupy

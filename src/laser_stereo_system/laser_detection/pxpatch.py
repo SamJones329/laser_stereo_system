@@ -2,7 +2,7 @@ import numpy as np
 from numba import cuda
 from laser_detection import maxthreadsperblock2d
 import sys
-from laser_stereo_system.debug.perftracker import PerfTracker
+from debug.perftracker import PerfTracker
 
 def recurse_patch(row: int, col: int, patch: list, img: np.ndarray, onlyCheckImmediateNeighbors=True):
     if onlyCheckImmediateNeighbors:
@@ -53,7 +53,7 @@ def throw_out_small_patches(subpixel_offsets):
             if val > 1e-6: # found laser px, look for patch
                 patch = [(row,col,val)]
                 subpixel_offsets[row,col] = 0.
-                recurse_patch(row, col, patch, subpixel_offsets, False)
+                recurse_patch(row, col, patch, subpixel_offsets, True)
                 if len(patch) >= 5:
                     patches.append(patch)
 
