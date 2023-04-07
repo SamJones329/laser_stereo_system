@@ -61,15 +61,15 @@ def calculate_gaussian_integral_windows_jit(reward_img) -> np.ndarray:
     ''' 
     rows = reward_img.shape[0]
     cols = reward_img.shape[1]
-    gvals = []
+    # gvals = []
     gvalimg = np.zeros(reward_img.shape)
     for col in prange(cols):
         for winstart in prange(rows-WINLEN):
             G = jit_gvals(reward_img, winstart, col, gvalimg)
             # if G >= MIN_GVAL:
-            gvals.append((col, winstart+WINLEN//2, -G))
+            # gvals.append((col, winstart+WINLEN//2, -G))
 
-    return np.array(gvals), gvalimg
+    return gvalimg
 
 @PerfTracker.track("gval")
 def calculate_gaussian_integral_windows(reward_img) -> np.ndarray:

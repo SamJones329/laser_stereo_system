@@ -19,22 +19,22 @@ def normalize(img):
 
 def calc(img):
     global gval_thresh
-    gvals, gvalimg = calculate_gaussian_integral_windows_jit(reward(img))#.copy_to_host()
+    gvals = calculate_gaussian_integral_windows_jit(reward(img))#.copy_to_host()
     print(f"Gvals:\n\tavg: {np.average(gvals)}\
           \n\tmin: {np.min(gvals)}\
           \n\tmax: {np.max(gvals)}\
           \n\tmed: {np.median(gvals)}\
           \n\t%over2000: {(gvals >= gval_thresh).sum() / (gvals.shape[0] * gvals.shape[1])}")
-    gvalimg[gvalimg < gval_thresh] = 0
-    gvalimg[gvalimg >= gval_thresh] = 1
+    gvals[gvals < gval_thresh] = 0
+    gvals[gvals >= gval_thresh] = 1
 
-    return gvalimg
+    return gvals
 
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         filename = sys.argv[1]
     else:
-        filename = "calib_imgs/set4/image1.png"
+        filename = "calib_imgs/set4/image4.png"
     path = os.path.join(os.getcwd(), filename)
     print(f"Looking for file at {path}")
     img = cv.imread(path) # BGR img
