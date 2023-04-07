@@ -15,10 +15,11 @@ from debug.debugshow import debugshow
 import matplotlib.pyplot as plt
 
 DEFAULT_IMG_DATA = [
-    ("calib_imgs/set1", 0.0224, (8,6)), 
-    ("calib_imgs/set2", 0.02909, (6,9)), 
-    ("calib_imgs/set3", 0.02909, (6,9)), 
-    ("calib_imgs/set4", 0.02909, (6,9))]
+    ("calib_imgs/set1", 0.0224, (8,6), 1910.), 
+    ("calib_imgs/set2", 0.02909, (6,9), 1151.), 
+    ("calib_imgs/set3", 0.02909, (6,9), 1322.), 
+    ("calib_imgs/set4", 0.02909, (6,9), 1730.)
+]
 
 
 def throw_out_outlier_clusters(img, gvals):
