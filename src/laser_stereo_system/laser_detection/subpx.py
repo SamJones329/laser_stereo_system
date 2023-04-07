@@ -1,4 +1,4 @@
-from numba import cuda
+from numba import cuda, njit, prange, jit
 import numpy as np
 from constants import LaserDetection
 from laser_detection import maxthreadsperblock2d, cupy
@@ -7,42 +7,46 @@ from debug.perftracker import PerfTracker
 
 WINLEN = LaserDetection.GVAL_WINLEN
 
-@cuda.jit
-def find_subpixel(gvals, ln_reward, reward_img, minval, offset_from_winstart_to_center, output):
-    row, col = cuda.grid(2)
+#@cuda.jit
+@njit(parallel=True)
+def find_subpixel(gvals, reward_img, minval, offset_from_winstart_to_center, output):
+    #row, col = cuda.grid(2)
+    # if (row,col) not in gvalset: return
     # center of window
-    center = row + offset_from_winstart_to_center
-    if not (0 < row < ln_reward.shape[0]-1 and 0 < col < ln_reward.shape[1]-1) or gvals[row,col] < minval: 
-        return
-    else:    
-        # TODO if abs(offset) >= 1, move the pixel the offset is relative to 
-        # correspondingly subtracting the offset until the abs(offset) < 1. If 
-        # new pixel comes along that lands in there that has to travel less from its offset, 
-        # use the new pixel instead
+    for row in prange(gvals.shape[0]):
+        for col in prange(gvals.shape[1]):
+            center = row + offset_from_winstart_to_center
+            if gvals[row,col] < minval: 
+                continue
+            #if not (0 < row < ln_reward.shape[0]-1 and 0 < col < ln_reward.shape[1]-1) or gvals[row,col] < minval: 
+            # TODO if abs(offset) >= 1, move the pixel the offset is relative to 
+            # correspondingly subtracting the offset until the abs(offset) < 1. If 
+            # new pixel comes along that lands in there that has to travel less from its offset, 
+            # use the new pixel instead
 
-        # ln(f(x)), ln(f(x-1)), ln(f(x+1))
-        lnfx = ln_reward[center, col]
-        lnfxm = ln_reward[center-1, col]
-        lnfxp = ln_reward[center+1, col]
-        denom = lnfxm - 2 * lnfx + lnfxp
-        if denom == 0:
-            # # 5px Center of Mass (CoM5) detector
-            fx = reward_img[center, col] # f(x)
-            fxp = reward_img[center+1, col] # f(x+1)
-            fxm = reward_img[center-1, col] # f(x-1)
-            fxp2 = reward_img[center+2, col] # f(x+2)
-            fxm2 = reward_img[center-2, col] # f(x-2)
-            num = 2*fxp2 + fxp - fxm - 2*fxm2
-            denom = fxm2 + fxm + fx + fxp + fxp2
-            subpixel_offset = num / denom
-            subpixel_offset = -1
-        else:
-            numer = lnfxm - lnfxp
-            subpixel_offset = 0.5 * numer / denom
-        output[center, col] = subpixel_offset
+            # ln(f(x)), ln(f(x-1)), ln(f(x+1))
+            lnfx = math.log(reward_img[center, col])
+            lnfxm = math.log(reward_img[center-1, col])
+            lnfxp = math.log(reward_img[center+1, col])
+            denom = lnfxm - 2 * lnfx + lnfxp
+            if denom == 0:
+                # # 5px Center of Mass (CoM5) detector
+                fx = reward_img[center, col] # f(x)
+                fxp = reward_img[center+1, col] # f(x+1)
+                fxm = reward_img[center-1, col] # f(x-1)
+                fxp2 = reward_img[center+2, col] # f(x+2)
+                fxm2 = reward_img[center-2, col] # f(x-2)
+                num = 2*fxp2 + fxp - fxm - 2*fxm2
+                denom = fxm2 + fxm + fx + fxp + fxp2
+                subpixel_offset = num / denom
+                subpixel_offset = -1
+            else:
+                numer = lnfxm - lnfxp
+                subpixel_offset = 0.5 * numer / denom
+            output[center, col] = subpixel_offset
 
 @PerfTracker.track("subpx_gpu")
-def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray, min_gval=LaserDetection.DEFAULT_GVAL_MIN_VAL):
+def find_gval_subpixels_gpu(gvals: np.ndarray, reward_img: np.ndarray, min_gval=LaserDetection.DEFAULT_GVAL_MIN_VAL):
     if gvals.shape != reward_img.shape: raise Exception("gval array should be same size as reward_img (gval.shape != reward_img.shape)")
     offset_from_winstart_to_center = WINLEN // 2
 
@@ -51,15 +55,20 @@ def find_gval_subpixels_gpu(gvals: cuda.devicearray, reward_img: np.ndarray, min
     blockspergrid_y = int(math.ceil(gvals.shape[1] / threadsperblock[1]))
     blockspergrid = (blockspergrid_x, blockspergrid_y)
 
-    with np.errstate(divide='ignore'):
-            d_reward_img = cupy.array(reward_img)
-            d_ln_reward = cupy.log(d_reward_img)
-            d_ln_reward[d_ln_reward == cupy.nan] = 0
-            d_ln_reward[abs(d_ln_reward) == cupy.inf] = 0
-    output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
-    find_subpixel[blockspergrid, threadsperblock](gvals, d_ln_reward, d_reward_img, min_gval, offset_from_winstart_to_center, output_global_mem)
-    output = output_global_mem.copy_to_host()
+    #gvalset: set = filter_gvals(gvals, min_gval)
 
+    #d_reward_img = cuda.to_device(reward_img)
+    #with np.errstate(divide='ignore'):
+    #        d_reward_img = cupy.array(reward_img)
+    #        ln_reward = cupy.log(d_reward_img)
+    #        ln_reward[ln_reward == cupy.nan] = 0
+    #        ln_reward[abs(ln_reward) == cupy.inf] = 0
+    #d_ln_reward = cuda.to_device(ln_reward)
+    #output_global_mem = cuda.to_device(np.zeros(gvals.shape))#cuda.device_array(gvals.shape)
+    #find_subpixel[blockspergrid, threadsperblock](cuda.to_device(gvals), d_reward_img, min_gval, offset_from_winstart_to_center, output_global_mem)
+    #output = output_global_mem.copy_to_host()
+    output = np.zeros(gvals.shape)
+    find_subpixel(gvals, reward_img, min_gval, offset_from_winstart_to_center, output)
     return output
 
 

@@ -13,15 +13,27 @@ from datetime import datetime as dt
 from debug.perftracker import PerfTracker
 from debug.debugshow import debugshow
 import matplotlib.pyplot as plt
+from numba import jit, njit
+import uuid
+
+DEFAULT_ROI = LaserDetection.DEFAULT_ROI
+NUM_LASER_LINES = LaserDetection.NUM_LASER_LINES
+mtx = ZedMini.LeftRectHD2K.K
+DEBUG = ImageDisplay.DEBUG
+DISP_COLORS = ImageDisplay.DISP_COLORS
+DISP_COLORSf = ImageDisplay.DISP_COLORSf
+MERGE_HLP_LINES_ANG_THRESH = LaserCalibration.MERGE_HLP_LINES_ANG_THRESH
+MERGE_HLP_LINE_DIST_THRESH = LaserCalibration.MERGE_HLP_LINE_DIST_THRESH
 
 DEFAULT_IMG_DATA = [
     ("calib_imgs/set1", 0.0224, (8,6), 1910.), 
-    ("calib_imgs/set2", 0.02909, (6,9), 1151.), 
-    ("calib_imgs/set3", 0.02909, (6,9), 1322.), 
-    ("calib_imgs/set4", 0.02909, (6,9), 1730.)
+    #("calib_imgs/set2", 0.02909, (6,9), 1151.), 
+    #("calib_imgs/set3", 0.02909, (6,9), 1322.), 
+    ("calib_imgs/set4", 0.02909, (6,9), 1387.)
 ]
 
 
+@njit
 def throw_out_outlier_clusters(img, gvals):
     # K-means clustering on img to segment good points from bad points
     criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 10, 1.0)
@@ -64,7 +76,7 @@ def throw_out_outlier_clusters(img, gvals):
         for clusterptidx, val in enumerate(cluster):
             x, y = val
             x, y = int(x), int(y)
-            cv.circle(clustering_img, (x, y), 2, ImageDisplay.DISP_COLORS[idx], cv.FILLED)
+            cv.circle(clustering_img, (x, y), 2, DISP_COLORS[idx], cv.FILLED)
         center = centers[idx]
         if minx < center[0] < maxx and miny < center[1] < maxy:
             goodclusters.append(cluster)
@@ -75,7 +87,7 @@ def throw_out_outlier_clusters(img, gvals):
         for clusterptidx, val in enumerate(cluster):
             x, y = val
             x, y = int(x), int(y)
-            cv.circle(goodclustering_img, (x, y), 2, ImageDisplay.DISP_COLORS[idx], cv.FILLED)
+            cv.circle(goodclustering_img, (x, y), 2, DISP_COLORS[idx], cv.FILLED)
     cv.rectangle(goodclustering_img, (minx, miny), (maxx, maxy), (255, 0, 0), 3)
 
     numgoodclusters = len(goodclusters)
@@ -93,10 +105,13 @@ def throw_out_outlier_clusters(img, gvals):
 
     return gvals
 
+@jit
 def segmentation(img, orig):
     lines = cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2) 
     if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
-
+    else: 
+        print("No hough lines!")
+        return None
 
     # hlp_laser_img_disp = orig.copy()
     # print("\nLines: ")
@@ -119,9 +134,9 @@ def segmentation(img, orig):
     # cv.imshow("ulines", draw_polar_lines(orig.copy(), lines))
     mergedlines = mathutil.merge_polar_lines(
         lines, 
-        LaserCalibration.MERGE_HLP_LINES_ANG_THRESH, 
-        LaserCalibration.MERGE_HLP_LINE_DIST_THRESH, 
-        LaserDetection.NUM_LASER_LINES)
+        MERGE_HLP_LINES_ANG_THRESH, 
+        MERGE_HLP_LINE_DIST_THRESH, 
+        NUM_LASER_LINES)
 
     # make all line angles positive
     for idx, line in enumerate(mergedlines):
@@ -135,13 +150,14 @@ def segmentation(img, orig):
     mergedlines = mergedlines[mergedlines[:, 0].argsort()] 
     return mergedlines
 
+@jit(forceobj=True)
 def imagept_laserplane_assoc(patches, polarlines):
     # associate each laser patch with a line
     # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
     # for speed could just pick one point from patch, will likely be enough given circumstances
     # we throw out patches too far from any lines
     maxdistfromline = 50 # px
-    patchgroups = [[0, []] for _ in range(LaserDetection.NUM_LASER_LINES)]
+    patchgroups = [[0, []] for _ in range(NUM_LASER_LINES)]
     for patch in patches:
         y, x, subpixel_offset_x = patch[0] # get point in patch
         x += subpixel_offset_x # add subpixel offset to x
@@ -160,13 +176,13 @@ def imagept_laserplane_assoc(patches, polarlines):
             patchgroups[bestline][0] += len(patch)
     return patchgroups
 
-def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tuple[int,int], gpu=False):
-    Pts3d = [[] for _ in range(LaserDetection.NUM_LASER_LINES)] # 3D pts
+#@jit(forceobj=True)
+def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tuple[int,int], min_gval, gpu=False):
+    Pts3d = [[] for _ in range(NUM_LASER_LINES)] # 3D pts
     for imgidx, (filename, img) in enumerate(imgs):
-        log_header(f"Processing image {imgidx}: {filename}")
+        log_header(f"Processing image {imgidx}: {filename}")#logheader
         ####### Finding Chessboard #######
 
-        mtx = ZedMini.LeftRectHD2K.K
         dist = None
         criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
@@ -185,7 +201,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
         ret, corners = cv.findChessboardCorners(gray, chessboard_dims)
 
         if not ret:
-            log_warn(f"Couldn't find chessboard, discarding image {imgidx}...")
+            print(f"Couldn't find chessboard, discarding image {imgidx}...") # logwarn
             continue
         corners2 = cv.cornerSubPix(gray, corners, (11,11), (-1,-1), criteria)
 
@@ -216,49 +232,53 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
 
 
         if gpu: 
-            reward = color_reward.get_reward_gpu(img)
-            gvals = gval.calculate_gaussian_integral_windows_gpu(reward)
+            rowmin = int(DEFAULT_ROI[0][0] * img.shape[0])
+            rowmax = int(DEFAULT_ROI[1][0] * img.shape[0])+1
+            colmin = int(DEFAULT_ROI[0][1] * img.shape[1])
+            colmax = int(DEFAULT_ROI[1][1] * img.shape[1])+1
+            roi_img = img[rowmin:rowmax,colmin:colmax]
+            reward = color_reward.get_reward_gpu(roi_img)
+            #reward = color_reward.get_reward_gpu(img)
+            gvals = gval.calculate_gaussian_integral_windows_gpu(reward, min_gval).copy_to_host()
+            #debugshow(gvals, "Gvals")
+            subpxs = subpx.find_gval_subpixels_gpu(gvals, reward, min_gval)
+            #debugshow(subpxs, "subpx")
+            filtered, patches = pxpatch.throw_out_small_patches_gpu(subpxs)
         else: 
             reward = color_reward.get_reward(img)
-            gvals = gval.calculate_gaussian_integral_windows(reward)
-
-
-        gvals = throw_out_outlier_clusters(img, gvals)
-        if gvals is None: continue
-
-
-        if gpu:
-            subpxs = subpx.find_gval_subpixels_gpu(gvals, reward)
-            filtered, patches = pxpatch.throw_out_small_patches_gpu(subpxs)
-        else:
+            gvals = gval.calculate_gaussian_integral_windows(reward, min_gval)
+            gvals = throw_out_outlier_clusters(img, gvals)
+            if gvals is None: continue
             subpxs = subpx.find_gval_subpixels(gvals, reward)
             filtered, patches = pxpatch.throw_out_small_patches(subpxs)
 
 
         laserpxbinary = np.zeros(filtered.shape, dtype=np.uint8)
         laserpxbinary[filtered != 0] = 255
+        #debugshow(laserpxbinary, "Laser Pixels")
+        #cv.waitKey(0)
         lines = segmentation(laserpxbinary, img)
+        if lines is None: continue
 
-        # debugshow(laserpxbinary, "Laser Pixels")
-
-        # mergedlinesimg = img.copy()
-        # print("\nMerged Lines")
-        # for i in range(0, len(lines)):
-        #     try:
-        #         print("line %s" % lines[i])
-        #         rho = lines[i][0]
-        #         theta = lines[i][1]
-        #         a = math.cos(theta)
-        #         b = math.sin(theta)
-        #         x0 = a * rho
-        #         y0 = b * rho
-        #         pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-        #         pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-        #         cv.line(mergedlinesimg, pt1, pt2, ImageDisplay.DISP_COLORS[i], 3, cv.LINE_AA)
-        #     except:
-        #         print("bad line (maybe vertical) %s" % lines[i])
-        # debugshow(mergedlinesimg, "Merged Lines")
-        # cv.waitKey(0)
+        #mergedlinesimg = img.copy() if gpu else roi_img.copy()
+        #print("\nMerged Lines")
+        #for i in range(0, len(lines)):
+        #    try:
+        #        print("line %s" % lines[i])
+        #        rho = lines[i][0]
+        #        theta = lines[i][1]
+        #        a = math.cos(theta)
+        #        b = math.sin(theta)
+        #        x0 = a * rho
+        #        y0 = b * rho
+        #        pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
+        #        pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
+        #        cv.line(mergedlinesimg, pt1, pt2, ImageDisplay.DISP_COLORS[i], 3, cv.LINE_AA)
+        #    except:
+        #        print("bad line (maybe vertical) %s" % lines[i])
+        #debugshow(mergedlinesimg, "Merged Lines")
+        #cv.waitKey(0)
+        
 
         patchgroups = imagept_laserplane_assoc(patches, lines)
         
@@ -269,7 +289,11 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             for patch in group:
                 for pt in patch:
                     row, col, x_offset = pt
-                    pt3d = mathutil.px_2_3d(row, col+x_offset, chessboard_plane, ZedMini.LeftRectHD2K.K) #H.dot([col + x_offset, row, 1])
+                    pt3d = mathutil.px_2_3d(
+                        row + rowmin, 
+                        col + colmin + x_offset, 
+                        chessboard_plane, 
+                        mtx) #H.dot([col + x_offset, row, 1])
                     Pts3d[idx].append(pt3d)
                     # PtsImg[idx].append((col + x_offset, row))
         
@@ -282,6 +306,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
     # RANSAC: form M subjects of k points from P
     planes = []
     for lineP in Pts3d:
+        print(len(lineP))
         potplanes = []
 
         M = 3
@@ -308,12 +333,12 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             distsum = subsetRelative.dot(normal).sum()
             potplanes.append((centroid, normal, distsum))
 
-    bestplane = potplanes[0]
-    for plane in potplanes:
-        if plane[2] < bestplane[2]:
-            bestplane = plane
-    planes.append(plane[:2]) # we don't need the distance anymore
-    # return plane that fits most points/minimizes distance d_j
+        bestplane = potplanes[0]
+        for plane in potplanes:
+            if plane[2] < bestplane[2]:
+                bestplane = plane
+        planes.append(plane[:2]) # we don't need the distance anymore
+        # return plane that fits most points/minimizes distance d_j
 
     ####### Done RANSAC Plane Extraction #######
     
@@ -321,9 +346,9 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
     planes = np.reshape(planes, (planes.shape[0], 6))
     log_info("Planes (centroid, normal)=<X,Y,Z,U,V,W>")
     log_info(planes)
-    np.save("Camera_Relative_Laser_Planes_" + str(dt.now()), planes) 
+    np.save("Camera_Relative_Laser_Planes_" + str(uuid.uuid4()), planes) 
 
-    if ImageDisplay.DEBUG:
+    if DEBUG:
         stdplanes = [
             (u, v, w, -u*x -v*y -w*z) 
             for x,y,z,u,v,w in planes
@@ -356,7 +381,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             Z = f(X,Y)
 
             ax.plot_surface(X, Y, Z, rstride=1, cstride=1,
-                            color=ImageDisplay.DISP_COLORSf[idx], edgecolor='none')
+                            color=DISP_COLORSf[idx], edgecolor='none')
         u, v = np.mgrid[0:2 * np.pi:30j, 0:np.pi:20j]
         x = np.cos(u) * np.sin(v)
         y = np.sin(u) * np.sin(v)
@@ -366,9 +391,9 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
 
 
 def main(
-        calibration_img_info: list[tuple[str, float, tuple[int,int]]], 
+        calibration_img_info: list[tuple[str, float, tuple[int,int], float]], 
         *, gpu=False, record_data=False):
-    for img_folder, square_size_m, chessboard_dims in calibration_img_info:
+    for img_folder, square_size_m, chessboard_dims, min_gval in calibration_img_info:
         imgs = []
         cpimgs = []
         filenames = []
@@ -380,14 +405,14 @@ def main(
                     imgs.append((filename, np.asarray(img))) # RGB format
                     cpimgs.append(cupy.asarray(img))
                     filenames.append(filename)
-        calibrate(imgs, square_size_m, chessboard_dims, gpu=gpu)
+        calibrate(imgs, square_size_m, chessboard_dims, min_gval, gpu=gpu)
 
 
 if __name__ == "__main__":
     numargs = len(sys.argv) - 1
     if numargs == 0:
-        # main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
-        main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
+        main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
+        # main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
         PerfTracker.export_to_csv()
     elif numargs % 3 != 0:
         log_err(

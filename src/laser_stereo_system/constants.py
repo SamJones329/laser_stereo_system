@@ -1,26 +1,6 @@
 import numpy as np
 from enum import Enum
 
-class Logging:
-    class LogLevels:
-        ERR = 1
-        WARN = 2
-        INFO = 3
-    LOG_LEVEL = LogLevels.INFO
-
-    class PrintCodes:
-        HEADER = '\033[95m'
-        INFOWHITE = '\033[97m'
-        OKBLUE = '\033[94m'
-        OKCYAN = '\033[96m'
-        OKGREEN = '\033[92m'
-        WARNING = '\033[93m'
-        FAIL = '\033[91m'
-        ENDC = '\033[0m'
-        BOLD = '\033[1m'
-        UNDERLINE = '\033[4m'
-        NOUNDERLINE = '\033[24m'
-
 class ImageDisplay:
     DISP_COLORS = [ #BGR
         (255,0,0), # royal blue
@@ -78,6 +58,7 @@ class LaserDetection:
         SEGMENT = 6
         ASSOC = 7
         GET3D = 8
+    DEFAULT_ROI = ((0.1, 0.25), (0.9, 0.75)) # region of interest defined as (tl, tr) where tl and tr as defined by (height%, width%)
 
 class Camera:
 
