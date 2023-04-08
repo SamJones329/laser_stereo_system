@@ -2,9 +2,10 @@ from constants import LaserDetection
 from laser_detection import cupy
 import numpy as np
 from debug.perftracker import PerfTracker
+from numba import jit
 
 @PerfTracker.track("reward")
-
+@jit(forceobj=True)
 def get_reward(img, weights=LaserDetection.DEFAULT_COLOR_WEIGHTS):
     return np.sum(img * weights, axis=2)
 

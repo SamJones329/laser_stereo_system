@@ -1,9 +1,10 @@
 import numpy as np
-from numba import cuda
+from numba import cuda, jit
 from laser_detection import maxthreadsperblock2d
 import sys
 from debug.perftracker import PerfTracker
 
+@jit(forceobj=True)
 def recurse_patch(row: int, col: int, patch: list, img: np.ndarray, onlyCheckImmediateNeighbors=True):
     if onlyCheckImmediateNeighbors:
       # check neighbors
@@ -44,6 +45,7 @@ def recurse_patch(row: int, col: int, patch: list, img: np.ndarray, onlyCheckImm
                       recurse_patch(searchingrow, searchingcol, patch, img, False)
 
 @PerfTracker.track("patch")
+@jit(forceobj=True)
 def throw_out_small_patches(subpixel_offsets):
     patches = []
     # find patches

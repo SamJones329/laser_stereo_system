@@ -13,8 +13,8 @@ def find_subpixel(gvals, reward_img, minval, offset_from_winstart_to_center, out
     #row, col = cuda.grid(2)
     # if (row,col) not in gvalset: return
     # center of window
-    for row in prange(gvals.shape[0]):
-        for col in prange(gvals.shape[1]):
+    for row in prange(2, gvals.shape[0]-2):
+        for col in prange(2, gvals.shape[1]-2):
             center = row + offset_from_winstart_to_center
             if gvals[row,col] < minval: 
                 continue
@@ -73,6 +73,7 @@ def find_gval_subpixels_gpu(gvals: np.ndarray, reward_img: np.ndarray, min_gval=
 
 
 @PerfTracker.track("subpx")
+@jit(forceobj=True)
 def find_gval_subpixels(gvals: np.ndarray, reward_img: np.ndarray):
     # subpixel detection via Gaussian approximation
     # delta = 1/2 * ( ( ln(f(x-1)) - ln(f(x+1)) ) / ( ln(f(x-1)) - 2ln(f(x)) + ln(f(x+1)) ) )
@@ -84,6 +85,8 @@ def find_gval_subpixels(gvals: np.ndarray, reward_img: np.ndarray):
     for window in gvals:
         # center of window
         x, y = int(window[0]), int(window[1])
+        if y < 2 or y > gvals.shape[0]-3 or x < 2 or x > gvals.shape[1]-3:
+            continue
         # f(x), f(x-1), f(x+1)
         fx = reward_img[y,x]
         fxm = reward_img[y,x-1]

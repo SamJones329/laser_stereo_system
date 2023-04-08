@@ -27,13 +27,13 @@ MERGE_HLP_LINE_DIST_THRESH = LaserCalibration.MERGE_HLP_LINE_DIST_THRESH
 
 DEFAULT_IMG_DATA = [
     ("calib_imgs/set1", 0.0224, (8,6), 1910.), 
-    #("calib_imgs/set2", 0.02909, (6,9), 1151.), 
-    #("calib_imgs/set3", 0.02909, (6,9), 1322.), 
-    ("calib_imgs/set4", 0.02909, (6,9), 1387.)
+        #("calib_imgs/set2", 0.02909, (6,9), 1151.), 
+        #("calib_imgs/set3", 0.02909, (6,9), 1322.), 
+    #("calib_imgs/set4", 0.02909, (6,9), 1387.)
 ]
 
 
-@njit
+@jit(forceobj=True)
 def throw_out_outlier_clusters(img, gvals):
     # K-means clustering on img to segment good points from bad points
     criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 10, 1.0)
@@ -105,7 +105,7 @@ def throw_out_outlier_clusters(img, gvals):
 
     return gvals
 
-@jit
+@jit(forceobj=True)
 def segmentation(img, orig):
     lines = cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2) 
     if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
@@ -246,11 +246,14 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             filtered, patches = pxpatch.throw_out_small_patches_gpu(subpxs)
         else: 
             reward = color_reward.get_reward(img)
+            #debugshow(reward, "rew")
             gvals = gval.calculate_gaussian_integral_windows(reward, min_gval)
             gvals = throw_out_outlier_clusters(img, gvals)
             if gvals is None: continue
             subpxs = subpx.find_gval_subpixels(gvals, reward)
             filtered, patches = pxpatch.throw_out_small_patches(subpxs)
+            rowmin = 0
+            colmin = 0
 
 
         laserpxbinary = np.zeros(filtered.shape, dtype=np.uint8)
@@ -307,6 +310,8 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
     planes = []
     for lineP in Pts3d:
         print(len(lineP))
+        if len(lineP) == 0: 
+            continue
         potplanes = []
 
         M = 3
@@ -387,7 +392,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
         y = np.sin(u) * np.sin(v)
         z = np.cos(v)
         ax.plot_surface(x * 0.25, y * 0.25, z * 0.25, cmap=plt.cm.YlGnBu_r)
-        plt.show()
+        #plt.show()
 
 
 def main(
@@ -411,8 +416,8 @@ def main(
 if __name__ == "__main__":
     numargs = len(sys.argv) - 1
     if numargs == 0:
-        main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
-        # main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
+        #main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
+        main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
         PerfTracker.export_to_csv()
     elif numargs % 3 != 0:
         log_err(

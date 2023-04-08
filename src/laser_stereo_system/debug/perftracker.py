@@ -52,6 +52,9 @@ class PerfTracker:
             value = PerfTracker.tracking_data[value]
             funcdata = np.array(value["runtimes"])
             funcdata = np.append(funcdata, np.array(value["maxmems"]))
+            if funcdata.shape[0] == 0:
+                print(f"No data in perf tracker for {name}")
+                return
             pd.DataFrame(funcdata).to_csv(f"perfdata_{key}.csv")
             return
         
@@ -59,9 +62,12 @@ class PerfTracker:
         for key, value in PerfTracker.tracking_data.items():
             funcdata = np.array(value["runtimes"])
             funcdata = np.append(funcdata, np.array(value["maxmems"]))
-            pd.DataFrame(funcdata).to_csv(f"perfdata_{key}.csv")
-            flatteneddata[f"{key}runtimes"] = value["runtimes"]
-            flatteneddata[f"{key}maxmems"] = value["maxmems"]
+            if funcdata.shape[0] != 0:
+                pd.DataFrame(funcdata).to_csv(f"perfdata_{key}.csv")
+                flatteneddata[f"{key}runtimes"] = value["runtimes"]
+                flatteneddata[f"{key}maxmems"] = value["maxmems"]
+        if len(flatteneddata) == 0:
+            print("PerfTracker has no data to export")
         all_data = pd.DataFrame(dict([ (k,pd.Series(v)) for k,v in flatteneddata.items() ]))
         all_data.to_csv("perfdata_all.csv")
     

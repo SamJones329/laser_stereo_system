@@ -1,4 +1,4 @@
-from numba import cuda, njit, prange
+from numba import cuda, njit, prange, jit
 from laser_detection import maxthreadsperblock2d
 import math
 from constants import LaserDetection
@@ -72,6 +72,7 @@ def calculate_gaussian_integral_windows_jit(reward_img) -> np.ndarray:
     return gvalimg
 
 @PerfTracker.track("gval")
+@jit(forceobj=True)
 def calculate_gaussian_integral_windows(reward_img, min_gval) -> np.ndarray:
     # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
     rows = reward_img.shape[0]
