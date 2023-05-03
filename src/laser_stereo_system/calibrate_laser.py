@@ -7,6 +7,7 @@ from constants import ZedMini, LaserDetection, LaserCalibration, ImageDisplay
 import cv2 as cv
 from typing import Tuple
 import sys
+from util.opencvutil import draw_polar_lines
 from util import mathutil
 import math
 from datetime import datetime as dt
@@ -103,7 +104,7 @@ def throw_out_outlier_clusters(img, gvals):
         gvals = np.append(gvals, goodclusters[i], axis=0)
     
     print("\nnum gvals went from %d to %d\n" % (oldnumgvals, gvals.shape[0]))
-    # debugshow(clustering_img, "clustering")
+    debugshow(clustering_img, "Clusters")
 
     return gvals
 
@@ -116,25 +117,6 @@ def segmentation(img, orig):
         print("No hough lines!")
         return None
 
-    # hlp_laser_img_disp = orig.copy()
-    # print("\nLines: ")
-    # if lines is not None:
-    #     lines = lines[lines[:, 0].argsort()] 
-    #     for i in range(0, len(lines)):
-    #         print("lines %s" % lines[i])
-    #         rho = lines[i][0]
-    #         theta = lines[i][1]
-    #         a = math.cos(theta)
-    #         b = math.sin(theta)
-    #         x0 = a * rho
-    #         y0 = b * rho
-    #         pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-    #         pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-    #         cv.line(hlp_laser_img_disp, pt1, pt2, (0,0,255), 3, cv.LINE_AA)
-    # debugshow(hlp_laser_img_disp, "houghlines")
-
-
-    # cv.imshow("ulines", draw_polar_lines(orig.copy(), lines))
     mergedlines = mathutil.merge_polar_lines(
         lines, 
         MERGE_HLP_LINES_ANG_THRESH, 
@@ -244,32 +226,30 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             colmax = int(DEFAULT_ROI[1][1] * img.shape[1])+1
             roi_img = img[rowmin:rowmax,colmin:colmax]
             reward = color_reward.get_reward_gpu(roi_img)
-            #reward = color_reward.get_reward_gpu(img)
+            debugshow(reward / np.max(reward), "Reward")
             gvals = gval.calculate_gaussian_integral_windows_gpu(reward, min_gval).copy_to_host()
-            #debugshow(gvals, "Gvals")
+            debugshow(gvals, "Gvals")
             subpxs = subpx.find_gval_subpixels_gpu(gvals, reward, min_gval)
-            #debugshow(subpxs, "subpx")
+            debugshow(subpx, "Subpxs")
             filtered, patches = pxpatch.throw_out_small_patches_gpu(subpxs)
         else: 
             reward = color_reward.get_reward(img)
-            # debugshow(reward / np.max(reward), "rew")
+            debugshow(reward / np.max(reward), "Reward")
+
             gvals = gval.calculate_gaussian_integral_windows(reward, min_gval)
-            gvalimg = np.zeros(reward.shape, dtype=np.float)
-            for col, row, val in gvals:
-                gvalimg[int(row), int(col)] = val
-            gvalimg /= np.max(gvalimg)
-            # debugshow(gvalimg, "gval")
             gvals = throw_out_outlier_clusters(img, gvals)
+
             gvalimg = np.zeros(reward.shape, dtype=np.float)
             for g in gvals:
                 col, row = int(g[0]), int(g[1]) 
                 gvalimg[row, col] = 1.
-            # debugshow(gvalimg, "filt")
+            debugshow(gvalimg, "Gvals")
+
             if gvals is None: continue
             subpxs = subpx.find_gval_subpixels(gvals, reward)
             dispsubpxs = np.zeros(subpxs.shape, dtype=np.float)
             dispsubpxs[subpxs != 0] = 1.
-            # debugshow(dispsubpxs, "subpx")
+            debugshow(dispsubpxs, "Subpxs")
             filtered, patches = pxpatch.throw_out_small_patches(subpxs)
             rowmin = 0
             colmin = 0
@@ -277,51 +257,41 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
 
         laserpxbinary = np.zeros(filtered.shape, dtype=np.uint8)
         laserpxbinary[filtered != 0] = 255
-        # debugshow(laserpxbinary, "Laser Pixels")
-        # cv.waitKey(0)
+        debugshow(laserpxbinary, "Laser Pixels")
         lines = segmentation(laserpxbinary, img)
         if lines is None: continue
 
-        #mergedlinesimg = img.copy() if gpu else roi_img.copy()
-        #print("\nMerged Lines")
-        #for i in range(0, len(lines)):
-        #    try:
-        #        print("line %s" % lines[i])
-        #        rho = lines[i][0]
-        #        theta = lines[i][1]
-        #        a = math.cos(theta)
-        #        b = math.sin(theta)
-        #        x0 = a * rho
-        #        y0 = b * rho
-        #        pt1 = (int(x0 + 2000*(-b)), int(y0 + 2000*(a)))
-        #        pt2 = (int(x0 - 2000*(-b)), int(y0 - 2000*(a)))
-        #        cv.line(mergedlinesimg, pt1, pt2, ImageDisplay.DISP_COLORS[i], 3, cv.LINE_AA)
-        #    except:
-        #        print("bad line (maybe vertical) %s" % lines[i])
-        #debugshow(mergedlinesimg, "Merged Lines")
-        #cv.waitKey(0)
+        if DEBUG:
+            mergedlinesimg = img.copy() if not gpu else roi_img.copy()
+            draw_polar_lines(mergedlinesimg, lines)
+            debugshow(mergedlinesimg, "Merged Lines")
         
-
         patchgroups = imagept_laserplane_assoc(patches, lines)
         
 
         ####### Extract 3D Points #######
+
+        ptsimg = img.copy()
         for idx, (numpts, group) in enumerate(patchgroups): 
             print("line %d has %d patches" % (idx, len(group)))
             for patch in group:
                 for pt in patch:
                     row, col, x_offset = pt
+                    row += rowmin
+                    col += colmin + x_offset
                     pt3d = mathutil.px_2_3d(
-                        row + rowmin, 
-                        col + colmin + x_offset, 
+                        row, 
+                        col, 
                         chessboard_plane, 
-                        mtx) #H.dot([col + x_offset, row, 1])
+                        mtx)
                     Pts3d[idx].append(pt3d)
-                    # PtsImg[idx].append((col + x_offset, row))
+                    ptsimg[int(row), int(col)] = DISP_COLORS[idx]
+        debugshow(ptsimg, "Grouped Points")
         
         ####### Done Extracting 3D Points #######
-    # /for imgidx, img in enumerate(imgs)
-    
+
+
+        if DEBUG: cv.waitKey(0)
 
     ####### RANSAC Plane Extraction #######
 
@@ -416,7 +386,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
 
 def main(
         calibration_img_info: list[tuple[str, float, tuple[int,int], float]], 
-        *, gpu=False, record_data=False):
+        *, gpu=False):
     for img_folder, square_size_m, chessboard_dims, min_gval in calibration_img_info:
         imgs = []
         cpimgs = []
@@ -435,9 +405,9 @@ def main(
 if __name__ == "__main__":
     numargs = len(sys.argv) - 1
     if numargs == 0:
-        #main(DEFAULT_IMG_DATA, gpu=True, record_data=True)
-        main(DEFAULT_IMG_DATA, gpu=False, record_data=True)
-        PerfTracker.export_to_csv()
+        #main(DEFAULT_IMG_DATA, gpu=True)
+        main(DEFAULT_IMG_DATA, gpu=False)
+        if LaserCalibration.RECORD_DATA: PerfTracker.export_to_csv()
     elif numargs % 3 != 0:
         log_err(
             '''Incorrect number of command line arguments. Either pass none 

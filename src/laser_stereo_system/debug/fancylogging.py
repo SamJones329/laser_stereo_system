@@ -1,6 +1,6 @@
 from numba import jit
 
-class Logging:
+class Logging: # TODO move to constants
     '''Class for logging to console with various logging levels.'''
     class LogLevels:
         ERR = 1

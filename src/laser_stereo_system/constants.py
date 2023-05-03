@@ -38,11 +38,12 @@ class ImageDisplay:
         (1,.7,.4), # cerulean
     ]
     SHOW_ALL_IMGS = True
-    DEBUG = True
+    DEBUG = False
 
 class LaserCalibration:
     MERGE_HLP_LINE_DIST_THRESH = 20
     MERGE_HLP_LINES_ANG_THRESH = 3
+    RECORD_DATA = True
 
 class LaserDetection:
     NUM_LASER_LINES = 15
