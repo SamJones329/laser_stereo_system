@@ -5,6 +5,16 @@ from constants import ImageDisplay
 names_shown = {}
 
 def debugshow(img: ArrayLike, name: str):
+    '''
+    Shows an image with the given name based on parameters set in constants.py
+    
+    if ImageDisplay.DEBUG is False, this function does nothing.
+
+    if ImageDisplay.SHOW_ALL_IMGS is True, this function will show all images
+    by appending a number to the end of the window name for each subsequent image 
+    of the same name. Otherwise, it will replace the image in the window with the
+    new image.
+    '''
     if ImageDisplay.DEBUG:
         if name in names_shown:
             if ImageDisplay.SHOW_ALL_IMGS:

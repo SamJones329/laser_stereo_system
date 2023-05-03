@@ -6,6 +6,10 @@ from debug.perftracker import PerfTracker
 
 @jit(forceobj=True)
 def recurse_patch(row: int, col: int, patch: list, img: np.ndarray, onlyCheckImmediateNeighbors=True):
+    '''Helper method to recurse through a patch of pixels to find contiguous pixels
+    WARNING: onlyCheckImmediateNeighbors should be left to True in general, and this method should be replaced
+    with an iterative method, as it is common to exceed max recursion depth when using non-strict 
+    contiguity (AKA onlyCheckImmediateNeighbors=False)'''
     if onlyCheckImmediateNeighbors:
       # check neighbors
       up = row-1
@@ -47,6 +51,8 @@ def recurse_patch(row: int, col: int, patch: list, img: np.ndarray, onlyCheckImm
 @PerfTracker.track("patch")
 @jit(forceobj=True)
 def throw_out_small_patches(subpixel_offsets):
+    '''Throws out small patches of laser points, defined as a group of less than 5 contiguous laser points.
+    Currently the loose definition of contiguity is not implemented for this function due to recursion depth issues.'''
     patches = []
     # find patches
     for row in range(subpixel_offsets.shape[0]):
@@ -70,6 +76,8 @@ def throw_out_small_patches(subpixel_offsets):
 
 @cuda.jit
 def gpu_patch(img, minval, out):
+    '''Helper method to calculate outcodes for a 7x7 box in the image to reduce 
+    the non-parallel work of the patching algorithm.'''
     outrow, outcol = cuda.grid(2) 
     row, col = outrow * 7, outcol * 7
     pxs = 0
@@ -96,6 +104,8 @@ def gpu_patch(img, minval, out):
 
 @PerfTracker.track("patch_gpu")
 def throw_out_small_patches_gpu(subpixel_offsets) -> tuple[np.ndarray, list[list[tuple[int,int,float]]]]:
+    '''Throws out small patches of laser points, defined as a group of less than 5 contiguous laser points.
+    Contiguity is defined as being within 3 pixels of the source pixel, or within a 7x7 box.'''
     threadsperblock = (maxthreadsperblock2d // 2, maxthreadsperblock2d // 2)# (16,16) # thread dims multiplied must not exceed max threads per block
     # we want each thread to have a 7x7 area to go over. we don't have 
     # to worry about going all the way to the edge since there won't be 

@@ -1,6 +1,7 @@
 from numba import jit
 
 class Logging:
+    '''Class for logging to console with various logging levels.'''
     class LogLevels:
         ERR = 1
         WARN = 2

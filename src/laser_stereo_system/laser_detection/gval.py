@@ -10,6 +10,7 @@ MIN_GVAL = LaserDetection.DEFAULT_GVAL_MIN_VAL
 
 @cuda.jit
 def gpu_gvals(img, min_gval, out):
+    '''CUDA kernel to calculate G values for a pixel in an image'''
     winstartrow, winstartcol = cuda.grid(2)
     # if(winstartrow % 64 == 0 and winstartcol % 64 == 0): print(winstartrow, winstartcol)
     if(winstartrow + WINLEN < img.shape[0] and winstartcol < img.shape[1]):
@@ -42,6 +43,7 @@ def calculate_gaussian_integral_windows_gpu(reward_img, min_gval) -> cuda.device
 
 @njit
 def jit_gvals(img, winstartrow, col, outimg):
+    '''Helper function to calculate G values in parallel for all pixels in an image using Numba parallelization.'''
     # if(winstartrow % 64 == 0 and winstartcol % 64 == 0): print(winstartrow, winstartcol)
     if(winstartrow + WINLEN < img.shape[0] and col < img.shape[1]):
         G = 0
@@ -74,6 +76,10 @@ def calculate_gaussian_integral_windows_jit(reward_img) -> np.ndarray:
 @PerfTracker.track("gval")
 @jit(forceobj=True)
 def calculate_gaussian_integral_windows(reward_img, min_gval) -> np.ndarray:
+    '''Calculates discretized Gaussian integral over window 
+    of size WINLEN. Takes in a mono laser intensity image. 
+    Only returns G values that are greater than min_gval.
+    ''' 
     # G_v_w = sum from v=v_0 to v_0 + l_w of (1 - 2*abs(v_0 - v + (l_w-1) / 2)) * I_L(u,v)
     rows = reward_img.shape[0]
     cols = reward_img.shape[1]

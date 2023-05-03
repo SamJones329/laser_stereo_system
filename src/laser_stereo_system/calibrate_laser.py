@@ -35,6 +35,8 @@ DEFAULT_IMG_DATA = [
 
 @jit(forceobj=True)
 def throw_out_outlier_clusters(img, gvals):
+    '''Used to throw out clusters that are too far away from the center of 
+    the image as a heuristic to determine if the cluster is a laser light or not.'''
     # K-means clustering on img to segment good points from bad points
     criteria = (cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 10, 1.0)
     flags = cv.KMEANS_PP_CENTERS
@@ -107,6 +109,7 @@ def throw_out_outlier_clusters(img, gvals):
 
 @jit(forceobj=True)
 def segmentation(img, orig):
+    '''Segmentation of the laser points into NUM_LASER_LINES lines.'''
     lines = cv.HoughLines(img, 1, np.pi / 180, threshold=100, srn=2, stn=2) 
     if lines is not None: lines = np.reshape(lines, (lines.shape[0], lines.shape[2]))
     else: 
@@ -152,6 +155,7 @@ def segmentation(img, orig):
 
 @jit(forceobj=True)
 def imagept_laserplane_assoc(patches, polarlines):
+    '''Associate each laser patch with a line.'''
     # associate each laser patch with a line
     # for more accuracy could calculate each patch's centroid or calculate an average distance from line of all points of a patch
     # for speed could just pick one point from patch, will likely be enough given circumstances
@@ -178,6 +182,8 @@ def imagept_laserplane_assoc(patches, polarlines):
 
 #@jit(forceobj=True)
 def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tuple[int,int], min_gval, gpu=False):
+    '''Extract laser projection planes from calibrated camera images of a parallel laser line pattern 
+    projected coplanar to a calibration chessboard pattern whose interior dimensions and square size are provided.'''
     Pts3d = [[] for _ in range(NUM_LASER_LINES)] # 3D pts
     for imgidx, (filename, img) in enumerate(imgs):
         log_header(f"Processing image {imgidx}: {filename}")#logheader
@@ -246,11 +252,24 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
             filtered, patches = pxpatch.throw_out_small_patches_gpu(subpxs)
         else: 
             reward = color_reward.get_reward(img)
-            #debugshow(reward, "rew")
+            # debugshow(reward / np.max(reward), "rew")
             gvals = gval.calculate_gaussian_integral_windows(reward, min_gval)
+            gvalimg = np.zeros(reward.shape, dtype=np.float)
+            for col, row, val in gvals:
+                gvalimg[int(row), int(col)] = val
+            gvalimg /= np.max(gvalimg)
+            # debugshow(gvalimg, "gval")
             gvals = throw_out_outlier_clusters(img, gvals)
+            gvalimg = np.zeros(reward.shape, dtype=np.float)
+            for g in gvals:
+                col, row = int(g[0]), int(g[1]) 
+                gvalimg[row, col] = 1.
+            # debugshow(gvalimg, "filt")
             if gvals is None: continue
             subpxs = subpx.find_gval_subpixels(gvals, reward)
+            dispsubpxs = np.zeros(subpxs.shape, dtype=np.float)
+            dispsubpxs[subpxs != 0] = 1.
+            # debugshow(dispsubpxs, "subpx")
             filtered, patches = pxpatch.throw_out_small_patches(subpxs)
             rowmin = 0
             colmin = 0
@@ -258,8 +277,8 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
 
         laserpxbinary = np.zeros(filtered.shape, dtype=np.uint8)
         laserpxbinary[filtered != 0] = 255
-        #debugshow(laserpxbinary, "Laser Pixels")
-        #cv.waitKey(0)
+        # debugshow(laserpxbinary, "Laser Pixels")
+        # cv.waitKey(0)
         lines = segmentation(laserpxbinary, img)
         if lines is None: continue
 
@@ -392,7 +411,7 @@ def calibrate(imgs: list[np.ndarray], square_size_m: float, chessboard_dims: tup
         y = np.sin(u) * np.sin(v)
         z = np.cos(v)
         ax.plot_surface(x * 0.25, y * 0.25, z * 0.25, cmap=plt.cm.YlGnBu_r)
-        #plt.show()
+        plt.show()
 
 
 def main(

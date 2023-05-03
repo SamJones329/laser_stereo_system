@@ -8,11 +8,9 @@ import numpy as np
 DEBUG_ENABLED = False
 
 class PerfTracker:
-    '''Tracker for runtime performance statistics'''
-
-    # create process tracker with id and name, return id
-    # create start tracking and stop tracking methods that start and stop timer for given id
-    # keep expanding array of time samples for each process being tracked
+    '''Tracker for runtime performance statistics. Simply use the @PerfTracker.track decorator, 
+    providing the name of the function you want to track. Currently, this tracks runtime and memory usage,
+    and can results for individual functions or all functions to csv files.'''
 
     tracking_data = {}
 
@@ -47,7 +45,7 @@ class PerfTracker:
             return perftrack_wrapper
         return track_decorator
     
-    def export_to_csv(name=None):
+    def export_to_csv(name=None, export_individual=False):
         if name is not None:
             value = PerfTracker.tracking_data[value]
             funcdata = np.array(value["runtimes"])
@@ -63,7 +61,8 @@ class PerfTracker:
             funcdata = np.array(value["runtimes"])
             funcdata = np.append(funcdata, np.array(value["maxmems"]))
             if funcdata.shape[0] != 0:
-                pd.DataFrame(funcdata).to_csv(f"perfdata_{key}.csv")
+                if export_individual:
+                    pd.DataFrame(funcdata).to_csv(f"perfdata_{key}.csv")
                 flatteneddata[f"{key}runtimes"] = value["runtimes"]
                 flatteneddata[f"{key}maxmems"] = value["maxmems"]
         if len(flatteneddata) == 0:

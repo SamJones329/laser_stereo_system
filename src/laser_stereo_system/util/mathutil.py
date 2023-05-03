@@ -55,6 +55,7 @@ def get_polar_line(line, odom=[0.0, 0.0, 0.0]):
     return np.array([np.abs(dist), angle_wrap(ang - odom[2])])
 
 def merge_polar_lines(lines, a_thresh, r_thresh, max_lines, debug=False):
+    '''Merges a set of polar lines into a given number of final lines based on the similarity parameters given.'''
     groups = [[[],[]] for _ in range(max_lines)]
     groupavgs = np.zeros((max_lines,2))
     groupsmade = 0

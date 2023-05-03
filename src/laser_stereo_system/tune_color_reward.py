@@ -1,3 +1,11 @@
+'''
+This file is for tuning the color reward function. It is meant to be used standalone 
+to tune for specific lighting conditions and laser configurations. You may either 
+provide the target image in the command line arguments or you may set the image 
+directly in the code. The image should be a 3-channel image with the laser in view.
+'''
+
+
 # from laser_detector.gval import calculate_gaussian_integral_windows
 from laser_detection.gval import calculate_gaussian_integral_windows_jit
 import cv2 as cv

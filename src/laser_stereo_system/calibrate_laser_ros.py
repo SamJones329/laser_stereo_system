@@ -1,5 +1,10 @@
 #!/usr/bin/python
 
+'''
+Deprecated calibration routine, replaced by calibrate_laser.py. This file is kept for reference and can be run via
+ROS with the included launch file.
+'''
+
 # TODO - add visualization parameter and don't import ros stuff when set to false
 
 from cv2 import minAreaRect

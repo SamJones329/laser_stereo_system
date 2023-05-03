@@ -1,3 +1,5 @@
+'''[WIP] - Real time laser detection and 3D point extraction.'''
+
 from enum import Enum
 from functools import wraps
 import math

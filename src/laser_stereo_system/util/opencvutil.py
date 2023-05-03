@@ -12,6 +12,7 @@ def calc_chessboard_corners(board_size, square_size):
     return corners
 
 def draw(img, corners, imgpts):
+    '''Draws the chessboard corners on the image.'''
     corner = tuple(corners[0].ravel())
     img = cv.line(img, corner, tuple(imgpts[0].ravel()), (255,0,0), 5)
     img = cv.line(img, corner, tuple(imgpts[1].ravel()), (0,255,0), 5)
@@ -19,6 +20,7 @@ def draw(img, corners, imgpts):
     return img
 
 def draw_polar_lines(img, lines):
+    '''Draws polar lines on the image.'''
     for i in range(0, len(lines)):
         try:
             print("line %s" % lines[i])

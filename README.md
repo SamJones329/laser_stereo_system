@@ -1,5 +1,5 @@
 # laser_stereo_system
-Undergraduate thesis work on underwater active stereo.
+Undergraduate research work on underwater active stereo.
 
 Calibration script requires to be run through ROS with minimum version of Melodic (Ubuntu 18.04) with Python 2.7 and OpenCV 3.4.
 
@@ -8,9 +8,7 @@ Real-time script is more flexible, being developed to work via Anaconda Python. 
 # Calibration
 `calibrate_laser.py` in the `src` directory contains a script for extracting extrinsic parameters of the laser relative to a given rectified images and the camera matrix.
 
-Currently, this file will extract the homography of a chessboard plane in frame and identify continguous laser patches in the image. 
-
-Work needs to be done still to extract feature descriptions of the laser lines through triangulation and some tuning needs to be done on the Gaussian laser detection algorithm.
+Currently, this file will extract a transform from the camera to the laser projection planes of the laser line pattern (15 in our case). Features such as showing debug images and performance tracking can also be enabled by modifying `constants.py`.
 
 Here are some images from the current progress.
 
