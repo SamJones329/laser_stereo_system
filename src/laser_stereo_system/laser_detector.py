@@ -1,5 +1,7 @@
 '''[WIP] - Real time laser detection and 3D point extraction.'''
 
+# Author: Samuel Jones
+
 from enum import Enum
 from functools import wraps
 import math
